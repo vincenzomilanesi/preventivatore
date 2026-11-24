@@ -61,19 +61,21 @@ git add -A && git commit -m "Portale in bianco v0.1.0" && git push
 ## C. Cloudflare Pages
 
 1. *Workers & Pages › Create › Pages › Connect to Git* › seleziona `preventivatore`.
+   **Project name: `preventivi-bacciardi`** → indirizzo `https://preventivi-bacciardi.pages.dev` (gratuito, nessun dominio da acquistare).
 2. Build settings: Framework preset **None** · Build command **vuoto** · Build output directory **`public`**.
    La cartella `functions/` viene riconosciuta da sola (diventa `/api/gas`).
 3. *Settings › Variables and Secrets* (Production), tipo **Secret**:
    - `GAS_URL` = URL `/exec` del punto A.7
    - `PROXY_SECRET` = valore del punto A.5
 4. *Deployments › Retry deployment* (le variabili valgono dal deploy successivo).
-5. Il portale è su `https://<progetto>.pages.dev`. Dominio personalizzato: più avanti, quando lo decide lo Studio.
+5. Il portale è su `https://preventivi-bacciardi.pages.dev`. Un dominio dello Studio (es. `preventivi.bacciardipartners.it`)
+   si potrà collegare più avanti da *Custom domains*, senza modifiche al codice; va registrato/gestito a nome dello Studio.
 
 Ogni push su `main` ripubblica il portale in automatico (zero build).
 
 ## D. Collaudo
 
-1. Apri `https://<progetto>.pages.dev` › inserisci la tua e-mail › arriva il codice › accedi.
+1. Apri `https://preventivi-bacciardi.pages.dev` › inserisci la tua e-mail › arriva il codice › accedi.
 2. Devono comparire: nome in alto a destra, 7 passi vuoti, in basso `web 0.1.0 · server 0.1.0`.
 3. Foglio `Log` del Registro: righe "OTP inviato" e "accesso".
 
