@@ -414,3 +414,74 @@ function mergeHubspot_(existing, incoming, opt) {
   res.rows = rows;
   return res;
 }
+
+// ================================================================== CLIENTI: ricerca
+/** Nome da mostrare: ragione sociale (azienda) o nome + cognome (persona). */
+function clienteLabel_(o) {
+  var pers = cleanText_([o.NOME, o.COGNOME].join(' '));
+  return o.TIPO === 'persona' ? (pers || cleanText_(o.RAGIONE_SOCIALE)) : (cleanText_(o.RAGIONE_SOCIALE) || pers);
+}
+
+/**
+ * Indice compatto per la ricerca: c = clienti [id, tipo, nome, città, P.IVA o CF, testo ricerca],
+ * r = referenti [id cliente, nome referente, testo ricerca]. Solo i campi che servono a mostrare i risultati.
+ */
+function buildClientiIndex_(clienti, referenti) {
+  return {
+    c: clienti.filter(function (o) { return o.ID_CLIENTE; }).map(function (o) {
+      return [o.ID_CLIENTE, o.TIPO, clienteLabel_(o), cleanText_(o.CITTA), o.PIVA || o.CF || '', o.RICERCA || searchText_(o)];
+    }),
+    r: referenti.filter(function (o) { return o.ID_CLIENTE; }).map(function (o) {
+      return [o.ID_CLIENTE, cleanText_([o.NOME, o.COGNOME].join(' ')), o.RICERCA || searchText_(o)];
+    })
+  };
+}
+
+/**
+ * Ricerca: tutti i termini devono comparire (anche come parte di parola) nel testo di ricerca del cliente o di un
+ * suo referente. Con "@" si cerca l'e-mail per intero. Ordine: nome uguale, nome che inizia con la ricerca,
+ * tutti i termini a inizio parola del nome, altro, trovato tramite referente; poi alfabetico.
+ * Ritorna {risultati: [{id, tipo, nome, citta, doc, via}], totale}.
+ */
+function searchIndex_(idx, q, limit) {
+  var raw = String(q || '').trim().toLowerCase();
+  var nq = normKey_(raw);
+  var email = raw.indexOf('@') >= 0 ? raw.replace(/\s/g, '') : '';
+  var tokens = nq ? nq.split(' ') : [];
+  var test = function (s) {
+    if (email) return s.indexOf(email) >= 0;
+    for (var i = 0; i < tokens.length; i++) if (s.indexOf(tokens[i]) < 0) return false;
+    return true;
+  };
+  var hits = {};
+  idx.c.forEach(function (c) {
+    if (!test(c[5])) return;
+    var nn = normKey_(c[2]);
+    var words = nn.split(' ');
+    var atStart = tokens.every(function (t) { return words.some(function (w) { return w.indexOf(t) === 0; }); });
+    var score = nn === nq ? 0 : nn.indexOf(nq) === 0 ? 1 : atStart ? 2 : 3;
+    hits[c[0]] = { c: c, score: score, via: '' };
+  });
+  var byId = null;
+  idx.r.forEach(function (r) {
+    if (hits[r[0]] || !test(r[2])) return;
+    if (!byId) { byId = {}; idx.c.forEach(function (c) { byId[c[0]] = c; }); }
+    if (byId[r[0]]) hits[r[0]] = { c: byId[r[0]], score: 4, via: r[1] };
+  });
+  var list = Object.keys(hits).map(function (k) { return hits[k]; });
+  list.sort(function (a, b) {
+    return a.score - b.score || (a.c[2].toLowerCase() < b.c[2].toLowerCase() ? -1 : a.c[2].toLowerCase() > b.c[2].toLowerCase() ? 1 : 0);
+  });
+  return {
+    totale: list.length,
+    risultati: list.slice(0, limit).map(function (h) {
+      return { id: h.c[0], tipo: h.c[1], nome: h.c[2], citta: h.c[3], doc: h.c[4], via: h.via };
+    })
+  };
+}
+
+/** Ricerca valida: almeno 2 caratteri utili (lettere/cifre), oppure un'e-mail. */
+function isSearchQueryOk_(q) {
+  var s = String(q || '');
+  return s.length <= 80 && (normKey_(s).replace(/ /g, '').length >= 2);
+}

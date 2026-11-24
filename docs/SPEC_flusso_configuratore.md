@@ -121,6 +121,12 @@ Scarti aziende: senza nome; dominio di un provider di posta/PEC **senza P.IVA** 
 no (minimizzazione); nel report i contatti scartati sono solo contati, senza nomi. Prova sul file reale (solo locale):
 7.337 aziende, 345 scarti, 60 gruppi P.IVA doppie (77 righe unite), reimport = 0 modifiche.
 
+**Ricerca implementata (v0.3.0, blocco 3):** azioni `clienti.search` {q} (2–80 caratteri, max 20 risultati + totale;
+tutti i termini anche parziali su ragione sociale/nome/cognome/città/dominio/P.IVA/CF/e-mail; con "@" e-mail intera;
+anche tramite i referenti, mostrati come "referente: …") e `clienti.get` {id} (dati del cliente + referenti per
+"Alla cortese attenzione di"). Indice compatto in CacheService a blocchi da 40k caratteri, 6 h, invalidato a ogni
+import. La ricerca non va nel Log. Nella bozza del browser restano solo ID_CLIENTE e ID_REFERENTE.
+
 **Utenti (24/11):** Martina Cangiotti DIP = OPE, profilo admin confermato. Dominio `bacciardistudiolegale.it` non ammesso.
 
 ## 6. Prossimi passi (19/11)

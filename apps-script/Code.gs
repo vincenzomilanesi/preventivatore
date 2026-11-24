@@ -14,7 +14,9 @@ function routes_() {
     'auth.verifyOtp':  { fn: actVerifyOtp_ },
     'auth.me':         { fn: actMe_, auth: true },
     'auth.logout':     { fn: actLogout_, auth: true },
-    'app.bootstrap':   { fn: actBootstrap_, auth: true }
+    'app.bootstrap':   { fn: actBootstrap_, auth: true },
+    'clienti.search':  { fn: actClientiSearch_, auth: true },
+    'clienti.get':     { fn: actClientiGet_, auth: true }
   };
 }
 

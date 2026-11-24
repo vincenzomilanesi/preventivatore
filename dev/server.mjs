@@ -10,13 +10,14 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createGas, seedSheets } from './gas-mock.mjs';
+import { createGas, seedSheets, seedClienti } from './gas-mock.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.argv[2] || 8787);
 const GAS_PORT = PORT + 1;
 const SECRET = 'dev-secret';
 const gas = createGas({ root: ROOT, props: { PROXY_SECRET: SECRET, ALLOWED_DOMAINS: 'test.invalid' }, sheets: seedSheets() });
+seedClienti(gas);
 const { onRequestPost } = await import(pathToFileURL(path.join(ROOT, 'functions/api/gas.js')).href);
 
 // --- finto Apps Script con redirect 302

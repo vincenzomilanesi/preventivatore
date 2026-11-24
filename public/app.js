@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var WEB_VERSION = '0.1.1';
+  var WEB_VERSION = '0.3.0';
   var TOKEN_KEY = 'prv_token';        // sessionStorage: la sessione muore con la scheda
   var DRAFT_KEY = 'prv_draft_v1';     // localStorage: bozza del preventivo in corso
 
@@ -35,10 +35,15 @@
     UPSTREAM_UNREACHABLE: 'Server non raggiungibile. Riprova tra poco.',
     UPSTREAM_ERROR: 'Risposta del server non valida.',
     SERVER_ERROR: 'Errore interno. Riprova; se persiste contatta l\'amministratore.',
-    NETWORK: 'Connessione assente o interrotta.'
+    NETWORK: 'Connessione assente o interrotta.',
+    QUERY_INVALID: 'Scrivi almeno 2 lettere o cifre (massimo 80 caratteri).',
+    NOT_FOUND: 'Cliente non trovato: potrebbe essere stato modificato. Cercalo di nuovo.'
   };
 
-  var state = { view: 'login', email: '', user: null, server: null, step: 0 };
+  var SEARCH_DELAY_MS = 350;
+
+  var state = { view: 'login', email: '', user: null, server: null, step: 0,
+    cliente: { q: '', seq: 0, timer: null, dettaglio: null } };
   var app = document.getElementById('app');
 
   // ------------------------------------------------------------------ util
@@ -144,13 +149,118 @@
       disabled: state.step === STEPS.length - 1 ? 'disabled' : null, on: { click: function () { setStep(state.step + 1); } } });
     return el('section', { class: 'wizard' }, [
       nav,
-      el('div', { class: 'card step', 'data-step': s.id }, [
-        el('h1', { text: s.label }),
-        el('p', { class: 'placeholder', text: 'Passo in costruzione.' })
-      ]),
+      el('div', { class: 'card step', 'data-step': s.id }, [el('h1', { text: s.label })].concat(
+        STEP_VIEWS[s.id] ? STEP_VIEWS[s.id](draft) : [el('p', { class: 'placeholder', text: 'Passo in costruzione.' })])),
       el('div', { class: 'actions' }, [prev, next])
     ]);
   }
+
+  // ------------------------------------------------------------------ passo Cliente
+  // Nella bozza (localStorage) restano solo gli ID scelti, mai i dati del cliente.
+  function stepCliente(draft) {
+    return draft.cliente && draft.cliente.id ? clienteScelto(draft) : clienteRicerca();
+  }
+
+  function clienteRicerca() {
+    var cs = state.cliente;
+    var status = el('p', { class: 'status', id: 'clienteStatus', role: 'status' });
+    var list = el('ul', { class: 'results', id: 'clienteRisultati' });
+    var input = el('input', { type: 'search', id: 'clienteQ', autocomplete: 'off', spellcheck: 'false', maxlength: '80',
+      placeholder: 'es. Rossi, Alfa Srl, 01234567897, nome@azienda.it', value: cs.q,
+      on: { input: function () { cs.q = input.value; schedule(); } } });
+
+    function schedule() {
+      clearTimeout(cs.timer);
+      var q = cs.q.trim();
+      if (q.replace(/[^0-9a-zA-ZÀ-ÿ]/g, '').length < 2) { list.replaceChildren(); status.textContent = ''; return; }
+      status.textContent = 'Ricerca in corso…';
+      cs.timer = setTimeout(function () { run(q); }, SEARCH_DELAY_MS);
+    }
+
+    function run(q) {
+      var seq = ++cs.seq;
+      api('clienti.search', { q: q }).then(function (r) {
+        if (seq !== cs.seq) return;   // risposta superata da una ricerca più recente
+        if (!r.ok) { list.replaceChildren(); status.textContent = errText(r.error); return; }
+        var d = r.data;
+        status.textContent = d.totale === 0 ? 'Nessun cliente trovato.' : d.totale > d.risultati.length
+          ? 'Mostrati i primi ' + d.risultati.length + ' di ' + d.totale + ': aggiungi un termine per restringere.'
+          : d.totale + (d.totale === 1 ? ' cliente trovato.' : ' clienti trovati.');
+        list.replaceChildren.apply(list, d.risultati.map(function (c) {
+          var meta = [c.citta, c.doc ? (c.tipo === 'persona' && c.doc.length === 16 ? 'CF ' : 'P.IVA ') + c.doc : '',
+            c.tipo === 'persona' ? 'persona fisica' : '', c.via ? 'referente: ' + c.via : ''].filter(Boolean).join(' · ');
+          return el('li', {}, [el('button', { type: 'button', class: 'result', on: { click: function () { scegli(c.id); } } }, [
+            el('span', { class: 'r-nome', text: c.nome || '(senza nome)' }), el('span', { class: 'r-meta', text: meta })
+          ])]);
+        }));
+      });
+    }
+
+    function scegli(id) {
+      var d = loadDraft();
+      d.cliente = { id: id };
+      d.referente = '';
+      saveDraft(d);
+      state.cliente.dettaglio = null;
+      render();
+    }
+
+    if (cs.q.trim()) setTimeout(schedule, 0);
+    return [
+      el('label', { for: 'clienteQ', text: 'Cerca cliente' }), input,
+      el('p', { class: 'hint', text: 'Nome, cognome, ragione sociale, P.IVA, codice fiscale o e-mail (anche di un referente).' }),
+      status, list,
+      el('p', { class: 'hint', text: 'Cliente non presente? L\'inserimento di un cliente nuovo arriva con il prossimo aggiornamento.' })
+    ];
+  }
+
+  function clienteScelto(draft) {
+    var box = el('div', { class: 'cliente-scelto', id: 'clienteScelto' }, [el('p', { class: 'hint', text: 'Caricamento…' })]);
+    var cambia = el('button', { type: 'button', id: 'btnCambiaCliente', text: 'Cambia cliente', on: { click: function () {
+      var d = loadDraft();
+      delete d.cliente;
+      delete d.referente;
+      saveDraft(d);
+      state.cliente.dettaglio = null;
+      render();
+    } } });
+    var cached = state.cliente.dettaglio;
+    if (cached && cached.id === draft.cliente.id) fill(cached);
+    else api('clienti.get', { id: draft.cliente.id }).then(function (r) {
+      if (!r.ok) { box.replaceChildren(el('p', { class: 'msg', role: 'alert', text: errText(r.error) })); return; }
+      state.cliente.dettaglio = r.data;
+      fill(r.data);
+    });
+
+    function fill(c) {
+      var rows = [
+        ['Tipo', c.tipo === 'persona' ? 'Persona fisica' : 'Azienda'],
+        ['P.IVA', c.piva], ['Codice fiscale', c.cf],
+        ['Indirizzo', [c.indirizzo, [c.cap, c.citta].filter(Boolean).join(' '), c.provincia, c.paese].filter(Boolean).join(', ')],
+        ['E-mail', c.email], ['Telefono', c.telefono]
+      ].filter(function (x) { return x[1]; });
+      var dl = el('dl', { class: 'dati' }, [].concat.apply([], rows.map(function (x) {
+        return [el('dt', { text: x[0] }), el('dd', { text: x[1] })];
+      })));
+      var parts = [el('h2', { text: c.denominazione || '(senza nome)' }), dl];
+      if (c.referenti.length) {
+        var sel = el('select', { id: 'clienteReferente', on: { change: function () {
+          var d = loadDraft(); d.referente = sel.value; saveDraft(d);
+        } } }, [el('option', { value: '', text: '— nessun referente —' })].concat(c.referenti.map(function (r) {
+          return el('option', { value: r.id, text: [r.cognome, r.nome].filter(Boolean).join(' ') + (r.email ? ' · ' + r.email : '') });
+        })));
+        var cur = loadDraft().referente || '';
+        if (c.referenti.some(function (r) { return r.id === cur; })) sel.value = cur;
+        parts.push(el('label', { for: 'clienteReferente', text: 'Alla cortese attenzione di' }), sel);
+      } else {
+        parts.push(el('p', { class: 'hint', text: 'Nessun referente registrato per questo cliente.' }));
+      }
+      box.replaceChildren.apply(box, parts);
+    }
+    return [box, el('div', { class: 'inline-actions' }, [cambia])];
+  }
+
+  var STEP_VIEWS = { cliente: stepCliente };
 
   function setStep(i) {
     var d = loadDraft();
@@ -180,7 +290,7 @@
   }
 
   document.getElementById('btnLogout').addEventListener('click', function () {
-    api('auth.logout').then(function () { setToken(null); state.user = null; go('login'); });
+    api('auth.logout').then(function () { setToken(null); state.user = null; state.cliente.dettaglio = null; go('login'); });
   });
   document.getElementById('vWeb').textContent = WEB_VERSION;
 

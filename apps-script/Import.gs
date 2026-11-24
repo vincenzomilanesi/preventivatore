@@ -63,7 +63,10 @@ function importHubspot_(table, tipo, fileName) {
   var res;
   try {
     res = tipo === 'aziende' ? importAziende_(table, now) : importContatti_(table, now);
-    if (res.ok) writeReport_(tipo, now, res.report);
+    if (res.ok) {
+      writeReport_(tipo, now, res.report);
+      invalidateClientiIndex_();
+    }
   } finally {
     lock.releaseLock();
   }

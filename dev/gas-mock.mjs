@@ -71,7 +71,13 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
     CacheService: {
       getScriptCache: () => ({
         get: (k) => { const e = store.get(k); if (!e || e.exp < now()) { store.delete(k); return null; } return e.v; },
-        put: (k, v, sec) => { if (sec > 21600) throw new Error('TTL > 6h'); store.set(k, { v: String(v), exp: now() + sec * 1000 }); },
+        put: (k, v, sec) => {
+          if (sec > 21600) throw new Error('TTL > 6h');
+          if (Buffer.byteLength(String(v), 'utf8') > 100 * 1024) throw new Error('valore > 100 KB');
+          store.set(k, { v: String(v), exp: now() + sec * 1000 });
+        },
+        getAll(keys) { const o = {}; keys.forEach((k) => { const v = this.get(k); if (v !== null) o[k] = v; }); return o; },
+        putAll(obj, sec) { Object.keys(obj).forEach((k) => this.put(k, obj[k], sec)); },
         remove: (k) => store.delete(k),
       }),
     },
@@ -104,7 +110,7 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
   };
   vm.createContext(ctx);
   const dir = path.join(root, 'apps-script');
-  for (const f of ['Config.gs', 'Logic.gs', 'Code.gs', 'Auth.gs', 'Setup.gs', 'Import.gs']) {
+  for (const f of ['Config.gs', 'Logic.gs', 'Code.gs', 'Auth.gs', 'Setup.gs', 'Import.gs', 'Clienti.gs']) {
     vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
   }
   return {
@@ -133,5 +139,36 @@ export function seedSheets() {
     Parametri: [['CHIAVE', 'VALORE', 'DESCRIZIONE'], ['versione_catalogo', '20261118-164303', ''],
       ['nota_mail_otp', 'Codice di accesso al Preventivatore Bacciardi Partners', '']],
     Log: [['TS', 'LIVELLO', 'AZIONE', 'UTENTE', 'DETTAGLIO']],
+    Clienti: [['ID_CLIENTE', 'ID_HUBSPOT', 'ID_HUBSPOT_ALTRI', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF',
+      'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'DOMINIO', 'ORIGINE', 'STATO_HUBSPOT',
+      'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA']],
+    Referenti: [['ID_REFERENTE', 'ID_HUBSPOT', 'ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'ORIGINE',
+      'STATO_HUBSPOT', 'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA']],
+    Report_import: [['TS', 'IMPORT', 'ESITO', 'ID_HUBSPOT', 'NOME', 'DETTAGLIO']],
+    Contatori: [['CHIAVE', 'VALORE'], ['PRV-2026', 0]],
   };
+}
+
+/** Clienti e referenti inventati (dominio test.invalid) per il server di sviluppo e i test. */
+export function seedClienti(g) {
+  const L = g.ctx;
+  const now = '2026-11-24 10:00';
+  const base = { ORIGINE: 'hubspot', STATO_HUBSPOT: 'sincronizzato', CREATO_DA: 'seed', CREATO_IL: now, AGGIORNATO_IL: now };
+  const clienti = [
+    { ID_CLIENTE: 'CLI-000001', ID_HUBSPOT: '1001', TIPO: 'azienda', RAGIONE_SOCIALE: 'Alfa Meccanica Srl', PIVA: '01234567897',
+      INDIRIZZO: 'Via Roma 1', CAP: '61121', CITTA: 'Pesaro', PROVINCIA: 'Pesaro-Urbino', PAESE: 'Italy', DOMINIO: 'alfa.test.invalid', TELEFONO: '+39 0721 000000' },
+    { ID_CLIENTE: 'CLI-000002', ID_HUBSPOT: '1002', TIPO: 'azienda', RAGIONE_SOCIALE: 'Alfa', CITTA: 'Fano', PAESE: 'Italy', DOMINIO: 'alfa2.test.invalid' },
+    { ID_CLIENTE: 'CLI-000003', ID_HUBSPOT: '1003', TIPO: 'azienda', RAGIONE_SOCIALE: 'Beta Società Agricola', PIVA: '12345678903', CITTA: 'Urbino', PAESE: 'Italy', DOMINIO: 'beta.test.invalid' },
+    { ID_CLIENTE: 'CLI-000004', ID_HUBSPOT: '2003', TIPO: 'persona', NOME: 'Carla', COGNOME: 'Neri', CF: 'RSSMRA80A01H501U', EMAIL: 'carla@privato.test.invalid', CITTA: 'Roma' },
+    { ID_CLIENTE: 'CLI-000005', ID_HUBSPOT: '1005', TIPO: 'azienda', RAGIONE_SOCIALE: 'Gamma Alfabeto SpA', CITTA: 'Ancona', PAESE: 'Italy' },
+  ].map((o) => ({ ...base, ...o }));
+  clienti.forEach((o) => { o.RICERCA = L.searchText_(o); });
+  const referenti = [
+    { ID_REFERENTE: 'REF-000001', ID_HUBSPOT: '3001', ID_CLIENTE: 'CLI-000001', NOME: 'Anna', COGNOME: 'Bianchi', EMAIL: 'anna.bianchi@alfa.test.invalid', TELEFONO: '' },
+    { ID_REFERENTE: 'REF-000002', ID_HUBSPOT: '3002', ID_CLIENTE: 'CLI-000001', NOME: 'Bruno', COGNOME: 'Verdi', EMAIL: 'bruno.verdi@alfa.test.invalid', TELEFONO: '+39 333 0000000' },
+    { ID_REFERENTE: 'REF-000003', ID_HUBSPOT: '3003', ID_CLIENTE: 'CLI-000003', NOME: 'Dario', COGNOME: 'Rossini', EMAIL: 'dario@beta.test.invalid', TELEFONO: '' },
+  ].map((o) => ({ ...base, ...o }));
+  referenti.forEach((o) => { o.RICERCA = L.searchText_(o); });
+  L.writeTable_('Clienti', clienti);
+  L.writeTable_('Referenti', referenti);
 }
