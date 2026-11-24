@@ -1,0 +1,12 @@
+# Fonti dei dipartimenti e dati clienti: restano su Drive, mai nel repository
+input/
+*.csv
+# Generati (rigenerabili con gli script)
+output/
+__pycache__/
+*.pyc
+# Varie
+.DS_Store
+node_modules/
+.wrangler/
+.dev.vars
