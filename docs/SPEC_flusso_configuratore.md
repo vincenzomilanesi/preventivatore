@@ -75,6 +75,45 @@ le ore mostrate vengono dal catalogo. Tariffe per ruolo e moltiplicatori restano
   se presenti, Contatti associati), solo i record "da esportare"; dopo il download STATO_HUBSPOT=esportato + data.
 - Al successivo import dell'export HubSpot i record si riconciliano (P.IVA/e-mail) e ricevono l'ID HubSpot.
 
+## 5bis. Clienti – analisi export Aziende e decisioni (24/11/2026)
+
+**Export Aziende HubSpot** (`tutti-gli-elementi-aziende.csv`, 12 MB, 7.759 righe × 219 colonne, 115 vuote; solo in
+locale nella sessione, mai nel repo). Dati aggregati:
+- 92% delle aziende creato in automatico da HubSpot dal dominio e-mail dei contatti (webinar, inviti): è la base
+  marketing, non l'anagrafica clienti. `Cliente attuale` = Sì sul 96%, fase = Lead sul 99,9%: flag inutilizzabili.
+- P.IVA su 781 aziende (10%), 11 cifre, 1 con checksum errato; 60 P.IVA ripetute su 137 righe. CF, PEC, SDI assenti.
+- Scarti: 192 senza nome; 143 "Artidea" create da sottodomini di 191.it (provider di posta).
+- 196 gruppi di nomi uguali (709 righe), in 107 con domini diversi: non si uniscono in automatico.
+- `Associated Contact` = "Nome Cognome (e-mail)" dei contatti (6.964 distinti): dato personale, non si importa da qui.
+
+| # | Tema | Decisione |
+|---|---|---|
+| C1 | Fonte P.IVA/CF/indirizzi | Esiste un'anagrafica nel gestionale dello Studio: **da estrarre e valutare**; per ora solo HubSpot |
+| C2 | Aziende da importare | **Tutte tranne gli scarti** (senza nome, "Artidea"), ~7.420 |
+| C3 | Persone | Foglio **Referenti** separato; Clienti = intestatari del preventivo (aziende e persone fisiche) |
+| C4 | Contatti da importare | Quelli **associati alle aziende importate** + quelli **senza azienda con fase del ciclo di vita oltre Lead** (→ Clienti, TIPO persona) |
+| C5 | Schema | Approvato (sotto) |
+| C6 | Cliente nuovo, obbligatori | Ragione sociale o nome+cognome, città, **e almeno uno tra e-mail e P.IVA/CF** |
+| C7 | Proprietà HubSpot "ID Preventivatore" | **Da chiedere all'admin HubSpot**; intanto riconciliazione su P.IVA/CF ed e-mail |
+| C8 | P.IVA doppie | Scelta automatica della riga più completa/recente, altri ID HubSpot conservati, report per unirle in HubSpot |
+| C9 | Chi fa import/export | **Comunicazione/Marketing**, a mano con CSV, quando serve |
+
+**Schema approvato** (Registro):
+- `Clienti`: ID_CLIENTE, ID_HUBSPOT, TIPO, RAGIONE_SOCIALE, NOME, COGNOME, PIVA, CF, EMAIL, TELEFONO, INDIRIZZO,
+  CAP, CITTA, PROVINCIA, PAESE, DOMINIO, ORIGINE, STATO_HUBSPOT, CREATO_DA, CREATO_IL, AGGIORNATO_IL, ESPORTATO_IL,
+  RICERCA (+ ID_HUBSPOT_ALTRI per i doppioni, conseguenza di C8).
+- `Referenti`: ID_REFERENTE, ID_HUBSPOT, ID_CLIENTE, NOME, COGNOME, EMAIL, TELEFONO, ORIGINE, STATO_HUBSPOT,
+  CREATO_DA, CREATO_IL, AGGIORNATO_IL, ESPORTATO_IL, RICERCA.
+- STATO_HUBSPOT: `sincronizzato` | `da esportare` | `esportato`. ORIGINE: `hubspot` | `configuratore`.
+
+**Export da rifare in HubSpot (solo colonne in vista):**
+- Aziende: ID record, Nome azienda, Nome dominio azienda, Partita IVA, Indirizzo, Indirizzo 2, Codice postale, Città,
+  Provincia, Paese/Regione, Nazione, Numero di telefono, Data ultima modifica.
+- Contatti: ID record, Nome, Cognome, E-mail, Numero di telefono, Associated Company IDs, Fase del ciclo di vita,
+  Data ultima modifica (+ codice fiscale se esiste la proprietà).
+
+**Utenti (24/11):** Martina Cangiotti DIP = OPE, profilo admin confermato. Dominio `bacciardistudiolegale.it` non ammesso.
+
 ## 6. Prossimi passi (19/11)
 1. Analisi dell'export **Aziende** HubSpot caricato da Vincenzo → struttura del foglio `Clienti` e mappatura colonne.
 2. Dettaglio §5 (campi nuovo cliente, formato CSV import HubSpot).
