@@ -10,3 +10,6 @@ __pycache__/
 node_modules/
 .wrangler/
 .dev.vars
+
+# File Apps Script unico generato da scripts/bundle_gas.sh
+dist/

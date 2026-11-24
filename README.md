@@ -3,14 +3,14 @@
 Repo di progetto (Blue Star Advice). Contesto completo: `docs/HANDOFF_Configuratore_Preventivi_Bacciardi.md`.
 Flusso utente concordato e punti aperti: `docs/SPEC_flusso_configuratore.md`.
 
-Messa in opera dell'infrastruttura: `docs/INFRA.md`.
+Messa in opera dell'infrastruttura: `docs/INFRA.md`. **Ultimo handoff: `docs/HANDOFF_2026-11-24.md`.**
 
 ## Stato al 24/11/2026
 
 | Task | Stato |
 |---|---|
 | 1 – DB unico Servizi/Attività | **fatto** |
-| Infrastruttura + portale "in bianco" (login OTP, 7 passi vuoti) | **fatto, collaudato in locale** – deploy da eseguire (`docs/INFRA.md`) |
+| Infrastruttura + portale "in bianco" (login OTP, 7 passi vuoti) | **online** su https://preventivi-bacciardi.pages.dev – collaudo primo login in corso |
 | 2 – Identità grafica dal sito | in attesa (accesso al sito dall'ambiente cloud) |
 | 3 – Funzioni del portale (pillar, clienti, servizi, export) | dopo il deploy, una alla volta |
 
@@ -24,7 +24,7 @@ dev/              simulatore servizi Google, server locale, test backend ed e2e 
 input/            fonti (NON modificare, escluse da git): schede compilate, da finalizzare, riferimento v4
 db/DB_Catalogo.xlsx   DB unico: SERVIZI, ATTIVITA, PILLAR, _LISTE (nascosto) – diventa il Google Sheet "DB_Catalogo"
 output/           log_normalizzazione.xlsx, report_validazione.md, export/<versione>/*.json
-scripts/          common.py (domini), normalize.py, build_db.py, validate.py, export.py, check_formulas.py
+scripts/          common.py (domini), normalize.py, build_db.py, validate.py, export.py, check_formulas.py, bundle_gas.sh
 tests/            test_integrita.py (test negativi R1–R4), test_pillar.py (pillar trasversali)
 docs/             handoff, specifica flusso
 ```
