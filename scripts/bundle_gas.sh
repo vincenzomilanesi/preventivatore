@@ -8,9 +8,9 @@ OUT="${1:-dist/Code_unico.gs}"
 mkdir -p "$(dirname "$OUT")"
 VER=$(grep -oP "APP_VERSION = '\K[^']+" apps-script/Config.gs)
 {
-  echo "// Preventivatore Bacciardi Partners – backend Apps Script v$VER (file unico: Config + Logic + Code + Auth + Setup)"
+  echo "// Preventivatore Bacciardi Partners – backend Apps Script v$VER (file unico: Config + Logic + Code + Auth + Setup + Import)"
   echo "// Generato da scripts/bundle_gas.sh – non modificare qui: modificare apps-script/*.gs"
-  for f in Config Logic Code Auth Setup; do
+  for f in Config Logic Code Auth Setup Import; do
     echo
     echo "// ===================================================================== $f.gs"
     cat "apps-script/$f.gs"

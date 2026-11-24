@@ -21,7 +21,7 @@ t('body null → BAD_REQUEST', JSON.parse(g.ctx.doPost({ postData: { contents: '
 t('azione sconosciuta → UNKNOWN_ACTION', call('pippo').error === 'UNKNOWN_ACTION');
 t('azione "toString" non raggiunge Object.prototype', call('toString').error === 'UNKNOWN_ACTION');
 const ping = call('ping');
-t('ping ok con versioni', ping.ok && ping.data.version === '0.1.1' && ping.data.versioneCatalogo === '20261118-164303');
+t('ping ok con versioni', ping.ok && ping.data.version === g.ctx.APP_VERSION && ping.data.versioneCatalogo === '20261118-164303');
 t('azione protetta senza token → SESSION_EXPIRED', call('app.bootstrap').error === 'SESSION_EXPIRED');
 
 // login

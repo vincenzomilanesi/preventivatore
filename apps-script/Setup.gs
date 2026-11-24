@@ -9,6 +9,8 @@ function onOpen() {
     .addItem('Svuota cache', 'menuSvuotaCache')
     .addItem('Sblocca utente (limite codici OTP)', 'menuSbloccaUtente')
     .addSeparator()
+    .addItem('Importa da HubSpot (Aziende o Contatti)', 'menuImportaHubspot')
+    .addSeparator()
     .addItem('Dati di prova (utente test)', 'menuDatiProva')
     .addToUi();
 }
@@ -87,7 +89,16 @@ function setupStructure_() {
       out.push('+ creato foglio ' + name);
     } else {
       var d = diffHeaders_(sh.getRange(1, 1, 1, hdr.length).getValues()[0], hdr);
-      out.push(d.length ? '⚠ ' + name + ': ' + d.join('; ') : '✔ ' + name);
+      if (d.length && sh.getLastRow() <= 1) {
+        // foglio senza dati: si aggiornano le intestazioni allo schema corrente
+        if (sh.getMaxColumns() < hdr.length) sh.insertColumnsAfter(sh.getMaxColumns(), hdr.length - sh.getMaxColumns());
+        sh.getRange(1, 1, 1, sh.getMaxColumns()).clearContent();
+        sh.getRange(1, 1, 1, hdr.length).setValues([hdr]).setFontWeight('bold');
+        sh.setFrozenRows(1);
+        out.push('+ ' + name + ': intestazioni aggiornate (foglio vuoto)');
+      } else {
+        out.push(d.length ? '⚠ ' + name + ': ' + d.join('; ') : '✔ ' + name);
+      }
     }
   });
   var par = sheet_('Parametri');
@@ -113,6 +124,12 @@ function setupStructure_() {
     out.push('+ cartella Drive "Preventivi" creata');
   }
   out.push(applyUtentiValidation_(sheet_('Utenti')));
+  if (!props.getProperty('IMPORT_FOLDER_ID')) {
+    var par2 = DriveApp.getFileById(ss.getId()).getParents();
+    var imp = par2.hasNext() ? par2.next().createFolder('import_hubspot') : DriveApp.createFolder('import_hubspot');
+    props.setProperty('IMPORT_FOLDER_ID', imp.getId());
+    out.push('+ cartella Drive "import_hubspot" creata');
+  }
   ['ALLOWED_DOMAINS', 'DB_CATALOGO_ID'].forEach(function (k) {
     if (!props.getProperty(k)) out.push('⚠ manca la proprietà script ' + k + ' (da impostare a mano)');
   });
@@ -177,6 +194,12 @@ function verifyConfig_() {
     chk(true, 'Cartella Preventivi accessibile', '');
   } catch (e) {
     chk(false, '', 'PREVENTIVI_FOLDER_ID non valido');
+  }
+  try {
+    DriveApp.getFolderById(c.IMPORT_FOLDER_ID);
+    chk(true, 'Cartella import_hubspot accessibile', '');
+  } catch (e) {
+    chk(false, '', 'IMPORT_FOLDER_ID non valido: eseguire Inizializza struttura');
   }
   var users = rowsToObjects_(sheet_('Utenti').getDataRange().getValues())
     .filter(function (u) { return isYes_(u.ATTIVO); });

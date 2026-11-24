@@ -8,7 +8,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 
-export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
+export function createGas({ root, props = {}, sheets = {}, catalogo = null, files = [] }) {
   const mails = [];
   const validations = []; // {sheet, row, col, rows, cols, rule}
   const store = new Map(); // cache: key -> {v, exp}
@@ -19,12 +19,36 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
       getDataRange: () => ({ getValues: () => data.map((r) => r.slice()) }),
       appendRow: (r) => data.push(r.map((v) => (v instanceof Date ? v.toISOString() : v))),
       getName: () => name,
-      getRange: (row, col, rows = 1, cols = 1) => ({
-        setDataValidation: (rule) => { validations.push({ sheet: name, row, col, rows, cols, rule }); },
-        getSheet: () => sheetObj(name),
-      }),
+      getLastRow: () => data.length,
+      getMaxRows: () => Math.max(data.length, 1000),
+      getMaxColumns: () => Math.max(26, ...data.map((r) => r.length)),
+      insertRowsAfter() {}, insertColumnsAfter() {}, setFrozenRows() {},
+      getRange: (row, col, rows = 1, cols = 1) => {
+        const rng = {
+          setDataValidation: (rule) => { validations.push({ sheet: name, row, col, rows, cols, rule }); },
+          getSheet: () => sheetObj(name),
+          setNumberFormat: (f) => { formats.push({ sheet: name, row, rows, f }); return rng; },
+          setFontWeight: () => rng,
+          getValues: () => Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => (data[row - 1 + i] || [])[col - 1 + j] ?? '')),
+          clearContent: () => { for (let i = 0; i < rows; i++) { const r = data[row - 1 + i]; if (r) for (let j = 0; j < cols; j++) r[col - 1 + j] = ''; } return rng; },
+          setValues: (v) => {
+            if (v.length !== rows || v.some((r) => r.length !== cols)) throw new Error('setValues: dimensioni errate');
+            // come Sheets: l'apostrofo iniziale forza il testo e non viene restituito da getValues
+            v.forEach((r, i) => { const t = data[row - 1 + i] || (data[row - 1 + i] = []); r.forEach((x, j) => {
+              if (typeof x === 'string' && x.charAt(0) === "'") { escapes.push({ sheet: name, value: x.slice(1) }); x = x.slice(1); }
+              t[col - 1 + j] = x;
+            }); });
+            // le righe completamente vuote in fondo spariscono (come getDataRange dopo clearContent)
+            while (data.length > 1 && data[data.length - 1].every((x) => x === '' || x === null || x === undefined)) data.pop();
+            return rng;
+          },
+        };
+        return rng;
+      },
     };
   };
+  const formats = [];
+  const escapes = [];
   const dvBuilder = () => {
     const r = {};
     const b = {
@@ -51,6 +75,12 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
         remove: (k) => store.delete(k),
       }),
     },
+    DriveApp: {
+      getFolderById: (id) => {
+        if (id !== props.IMPORT_FOLDER_ID) throw new Error('folder not found');
+        return { getFiles: () => { const l = files.slice(); return { hasNext: () => l.length > 0, next: () => l.shift() }; } };
+      },
+    },
     SpreadsheetApp: {
       getActive: () => ({ getSheetByName: (n) => (sheets[n] ? sheetObj(n) : null) }),
       newDataValidation: dvBuilder,
@@ -63,6 +93,7 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       getUuid: () => crypto.randomUUID(),
+      formatDate: (d, tz, fmt) => d.toISOString().slice(0, 16).replace('T', ' '),
       DigestAlgorithm: { SHA_256: 'sha256' },
       computeDigest: (alg, s) => [...crypto.createHash(alg).update(s, 'utf8').digest()].map((b) => (b > 127 ? b - 256 : b)),
     },
@@ -73,13 +104,15 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
   };
   vm.createContext(ctx);
   const dir = path.join(root, 'apps-script');
-  for (const f of ['Config.gs', 'Logic.gs', 'Code.gs', 'Auth.gs', 'Setup.gs']) {
+  for (const f of ['Config.gs', 'Logic.gs', 'Code.gs', 'Auth.gs', 'Setup.gs', 'Import.gs']) {
     vm.runInContext(fs.readFileSync(path.join(dir, f), 'utf8'), ctx, { filename: f });
   }
   return {
     ctx,
     mails,
     validations,
+    formats,
+    escapes,
     sheetObj,
     cache: store,
     doPost: (obj) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(obj) } }).getContent()),

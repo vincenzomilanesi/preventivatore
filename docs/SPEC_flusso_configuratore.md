@@ -112,6 +112,15 @@ locale nella sessione, mai nel repo). Dati aggregati:
 - Contatti: ID record, Nome, Cognome, E-mail, Numero di telefono, Associated Company IDs, Fase del ciclo di vita,
   Data ultima modifica (+ codice fiscale se esiste la proprietà).
 
+**Import implementato (v0.2.0, blocchi 1–2):** menu *Preventivatore › Importa da HubSpot (Aziende o Contatti)*;
+il CSV va nella cartella Drive `import_hubspot` (creata da "Inizializza struttura"), un file alla volta, prima Aziende
+poi Contatti. Tipo riconosciuto dalle intestazioni (italiano o inglese). Idempotente (chiave ID HubSpot + ID_HUBSPOT_ALTRI);
+tocca solo righe ORIGINE=hubspot; non cancella (righe assenti nel report); file importato spostato nel cestino.
+Scarti aziende: senza nome; dominio di un provider di posta/PEC **senza P.IVA** (regola generale: sul file del 24/11
+153 righe = 143 "Artidea" + 10 su legalmail/pec/libero/tin/teletu/fastwebnet). Contatti: telefono fisso sì, cellulare
+no (minimizzazione); nel report i contatti scartati sono solo contati, senza nomi. Prova sul file reale (solo locale):
+7.337 aziende, 345 scarti, 60 gruppi P.IVA doppie (77 righe unite), reimport = 0 modifiche.
+
 **Utenti (24/11):** Martina Cangiotti DIP = OPE, profilo admin confermato. Dominio `bacciardistudiolegale.it` non ammesso.
 
 ## 6. Prossimi passi (19/11)
