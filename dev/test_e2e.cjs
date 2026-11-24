@@ -38,7 +38,7 @@ const t = (n, c) => { console.log(`${c ? '✔' : '✖'} ${n}`); if (!c) fails++;
   await page.waitForSelector('.stepper');
   t('home con stepper', (await page.locator('.stepper li').count()) === 7);
   t('nome utente in testata', (await page.textContent('#userName')).includes('Mario Rossi'));
-  t('versioni in piè di pagina', /server 0\.1\.0 · catalogo 20261118-164303/.test(await page.textContent('#versionInfo')));
+  t('versioni in piè di pagina', /server 0\.1\.1 · catalogo 20261118-164303/.test(await page.textContent('#versionInfo')));
   await page.screenshot({ path: `${OUT}/02_home.png` });
 
   await page.click('text=Avanti →');

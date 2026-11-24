@@ -8,8 +8,9 @@ import path from 'node:path';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
 
-export function createGas({ root, props = {}, sheets = {} }) {
+export function createGas({ root, props = {}, sheets = {}, catalogo = null }) {
   const mails = [];
+  const validations = []; // {sheet, row, col, rows, cols, rule}
   const store = new Map(); // cache: key -> {v, exp}
   const now = () => Date.now();
   const sheetObj = (name) => {
@@ -18,7 +19,21 @@ export function createGas({ root, props = {}, sheets = {} }) {
       getDataRange: () => ({ getValues: () => data.map((r) => r.slice()) }),
       appendRow: (r) => data.push(r.map((v) => (v instanceof Date ? v.toISOString() : v))),
       getName: () => name,
+      getRange: (row, col, rows = 1, cols = 1) => ({
+        setDataValidation: (rule) => { validations.push({ sheet: name, row, col, rows, cols, rule }); },
+        getSheet: () => sheetObj(name),
+      }),
     };
+  };
+  const dvBuilder = () => {
+    const r = {};
+    const b = {
+      requireValueInList: (values, dropdown) => { r.values = values.slice(); r.dropdown = dropdown; return b; },
+      setAllowInvalid: (v) => { r.allowInvalid = v; return b; },
+      setHelpText: (t) => { r.help = t; return b; },
+      build: () => ({ ...r }),
+    };
+    return b;
   };
   const ctx = {
     console,
@@ -36,7 +51,14 @@ export function createGas({ root, props = {}, sheets = {} }) {
         remove: (k) => store.delete(k),
       }),
     },
-    SpreadsheetApp: { getActive: () => ({ getSheetByName: (n) => (sheets[n] ? sheetObj(n) : null) }) },
+    SpreadsheetApp: {
+      getActive: () => ({ getSheetByName: (n) => (sheets[n] ? sheetObj(n) : null) }),
+      newDataValidation: dvBuilder,
+      openById: (id) => {
+        if (!catalogo || id !== props.DB_CATALOGO_ID) throw new Error('not found');
+        return { getSheetByName: (n) => (catalogo[n] ? { getDataRange: () => ({ getValues: () => catalogo[n].map((r) => r.slice()) }) } : null) };
+      },
+    },
     MailApp: { sendEmail: (m) => mails.push(m), getRemainingDailyQuota: () => 100 },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
@@ -57,6 +79,8 @@ export function createGas({ root, props = {}, sheets = {} }) {
   return {
     ctx,
     mails,
+    validations,
+    sheetObj,
     cache: store,
     doPost: (obj) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(obj) } }).getContent()),
     lastOtp: (email) => {

@@ -11,7 +11,21 @@
  *   OTP_TTL_MIN           validità codice OTP in minuti (default 10)
  *   SESSION_TTL_MIN       durata sessione in minuti, rinnovata a ogni chiamata (default 240, max 360)
  */
-var APP_VERSION = '0.1.0';
+var APP_VERSION = '0.1.1';
+
+/**
+ * Valori ammessi nelle tendine del foglio Utenti (create da "Inizializza / verifica struttura").
+ * DIP: letto da DB_Catalogo › _LISTE (colonna con intestazione DIP); USERS_DIP_FALLBACK solo se il catalogo
+ * non è raggiungibile. RUOLO: regola 6 dell'handoff 18/11. strict=false → valore fuori lista accettato con avviso.
+ */
+var USERS_VALIDATION = {
+  DIP: { strict: false },
+  RUOLO: { values: ['Head', 'Of Counsel', 'Senior', 'Junior', 'Trainee'], strict: false },
+  PROFILO: { values: ['utente', 'admin'], strict: true },
+  ATTIVO: { values: ['Sì', 'No'], strict: true }
+};
+var USERS_DIP_FALLBACK = ['ICL', 'CL', 'TAX', 'TP', 'GM', 'RE', 'CF', 'LIT', 'LAB', 'SSI', 'CNT', 'OPE'];
+var USERS_VALIDATION_ROWS = 500;
 
 /** Schema dei fogli del Registro: deve restare 1:1 con le future liste SharePoint (fase 2). */
 var REGISTRO_SCHEMA = {

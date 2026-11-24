@@ -48,11 +48,22 @@ function rowsToObjects_(values) {
   return out;
 }
 
-/** Utente abilitato al login: presente in Utenti con ATTIVO = Sì. */
+/**
+ * true se il valore significa "Sì": accetta Sì / Si / SI / sì / sí (spazi e maiuscole ignorati) e la casella
+ * di controllo spuntata (true). Tutto il resto (No, vuoto, "Sìx"…) è false.
+ */
+function isYes_(v) {
+  if (v === true) return true;
+  var s = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+  s = s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+  return s === 'si';
+}
+
+/** Utente abilitato al login: presente in Utenti con ATTIVO = Sì (vedi isYes_). */
 function findActiveUser_(users, email) {
   for (var i = 0; i < users.length; i++) {
     var u = users[i];
-    if (normalizeEmail_(u.EMAIL) === email && String(u.ATTIVO).trim() === 'Sì') {
+    if (normalizeEmail_(u.EMAIL) === email && isYes_(u.ATTIVO)) {
       return {
         email: email,
         nome: String(u.NOME || ''),
@@ -74,6 +85,11 @@ function diffHeaders_(actual, expected) {
       '", trovato "' + (actual[i] || '') + '"');
   }
   return diffs;
+}
+
+/** Chiavi di cache da rimuovere per sbloccare un utente (limite richieste OTP + codice in corso). */
+function unlockCacheKeys_(email) {
+  return ['otp_rl_' + email, 'otp_' + email];
 }
 
 /** Testo sicuro per celle di export (no formule iniettate: =, +, -, @). */

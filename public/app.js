@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var WEB_VERSION = '0.1.0';
+  var WEB_VERSION = '0.1.1';
   var TOKEN_KEY = 'prv_token';        // sessionStorage: la sessione muore con la scheda
   var DRAFT_KEY = 'prv_draft_v1';     // localStorage: bozza del preventivo in corso
 

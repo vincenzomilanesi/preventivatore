@@ -7,6 +7,7 @@ function onOpen() {
     .addItem('Inizializza / verifica struttura', 'menuSetup')
     .addItem('Verifica configurazione', 'menuVerifica')
     .addItem('Svuota cache', 'menuSvuotaCache')
+    .addItem('Sblocca utente (limite codici OTP)', 'menuSbloccaUtente')
     .addSeparator()
     .addItem('Dati di prova (utente test)', 'menuDatiProva')
     .addToUi();
@@ -26,6 +27,39 @@ function menuVerifica() {
 function menuSvuotaCache() {
   CacheService.getScriptCache().remove('users_v1');
   SpreadsheetApp.getUi().alert('Cache utenti svuotata.');
+}
+
+/**
+ * Trigger semplice: ogni modifica manuale al foglio Utenti svuota la cache utenti, così attivazioni,
+ * disattivazioni e cambi di profilo valgono subito (senza attendere i 5 minuti).
+ * Non scatta per eliminazione di righe/colonne né per modifiche fatte da script: in quei casi
+ * usare il menu "Svuota cache" (per togliere un accesso, meglio ATTIVO = No che cancellare la riga).
+ */
+function onEdit(e) {
+  try {
+    if (e && e.range && e.range.getSheet().getName() === 'Utenti') {
+      CacheService.getScriptCache().remove('users_v1');
+    }
+  } catch (err) { /* un trigger semplice non deve mai mostrare errori all'utente */ }
+}
+
+function menuSbloccaUtente() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('Sblocca utente', 'E-mail dell\'utente da sbloccare (azzera il limite di richieste del codice ' +
+    'e l\'eventuale codice bloccato dai tentativi errati):', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var email = normalizeEmail_(r.getResponseText());
+  if (!isValidEmail_(email)) return ui.alert('E-mail non valida.');
+  unlockUser_(email);
+  ui.alert('Sbloccato ' + email + ': può richiedere subito un nuovo codice.');
+}
+
+/** Rimuove dalla cache limite richieste e OTP in corso dell'utente, svuota la cache utenti, scrive nel Log. */
+function unlockUser_(email) {
+  var cache = CacheService.getScriptCache();
+  unlockCacheKeys_(email).forEach(function (k) { cache.remove(k); });
+  cache.remove('users_v1');
+  log_('INFO', 'admin.sbloccaUtente', email, 'sbloccato dal menu');
 }
 
 function menuDatiProva() {
@@ -78,10 +112,49 @@ function setupStructure_() {
     props.setProperty('PREVENTIVI_FOLDER_ID', folder.getId());
     out.push('+ cartella Drive "Preventivi" creata');
   }
+  out.push(applyUtentiValidation_(sheet_('Utenti')));
   ['ALLOWED_DOMAINS', 'DB_CATALOGO_ID'].forEach(function (k) {
     if (!props.getProperty(k)) out.push('⚠ manca la proprietà script ' + k + ' (da impostare a mano)');
   });
   return out;
+}
+
+/**
+ * Tendine sul foglio Utenti (DIP, RUOLO, PROFILO, ATTIVO), righe 2..USERS_VALIDATION_ROWS+1.
+ * Idempotente: riapplica le regole a ogni "Inizializza / verifica struttura". Non modifica i valori già presenti
+ * (un valore fuori lista resta e viene segnalato dal triangolo rosso del foglio).
+ */
+function applyUtentiValidation_(sh) {
+  var hdr = REGISTRO_SCHEMA.Utenti;
+  var dip = catalogoLista_('DIP');
+  var fonteDip = dip.length ? 'DB_Catalogo' : 'elenco di riserva';
+  if (!dip.length) dip = USERS_DIP_FALLBACK;
+  Object.keys(USERS_VALIDATION).forEach(function (col) {
+    var spec = USERS_VALIDATION[col];
+    var values = col === 'DIP' ? dip : spec.values;
+    var rule = SpreadsheetApp.newDataValidation().requireValueInList(values, true)
+      .setAllowInvalid(!spec.strict)
+      .setHelpText('Valori ammessi: ' + values.join(', ')).build();
+    sh.getRange(2, hdr.indexOf(col) + 1, USERS_VALIDATION_ROWS, 1).setDataValidation(rule);
+  });
+  return '✔ tendine Utenti (DIP da ' + fonteDip + ': ' + dip.length + ' codici)';
+}
+
+/** Valori di una colonna del foglio _LISTE di DB_Catalogo (per intestazione), [] se non raggiungibile. */
+function catalogoLista_(header) {
+  try {
+    var v = SpreadsheetApp.openById(cfg_().DB_CATALOGO_ID).getSheetByName('_LISTE').getDataRange().getValues();
+    var j = v[0].map(String).indexOf(header);
+    if (j < 0) return [];
+    var out = [];
+    for (var i = 1; i < v.length; i++) {
+      var s = String(v[i][j] === null ? '' : v[i][j]).trim();
+      if (s && out.indexOf(s) < 0) out.push(s);
+    }
+    return out;
+  } catch (e) {
+    return [];
+  }
 }
 
 /** Controlli di configurazione senza modifiche. */
@@ -106,7 +179,7 @@ function verifyConfig_() {
     chk(false, '', 'PREVENTIVI_FOLDER_ID non valido');
   }
   var users = rowsToObjects_(sheet_('Utenti').getDataRange().getValues())
-    .filter(function (u) { return String(u.ATTIVO) === 'Sì'; });
+    .filter(function (u) { return isYes_(u.ATTIVO); });
   chk(users.length > 0, 'Utenti attivi: ' + users.length, 'Nessun utente attivo in Utenti');
   lines.push('ℹ Quota mail residua oggi: ' + MailApp.getRemainingDailyQuota());
   return { ok: ok, lines: lines };
