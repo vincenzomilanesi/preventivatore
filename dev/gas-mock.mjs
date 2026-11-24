@@ -196,4 +196,6 @@ export function seedClienti(g) {
   referenti.forEach((o) => { o.RICERCA = L.searchText_(o); });
   L.writeTable_('Clienti', clienti);
   L.writeTable_('Referenti', referenti);
+  L.setCounter_('CLI', 6);
+  L.setCounter_('REF', 4);
 }

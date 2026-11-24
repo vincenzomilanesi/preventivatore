@@ -57,12 +57,65 @@ t('dettaglio senza colonne tecniche', r.ok && !('ricerca' in r.data) && !('id_hu
 t('dettaglio: ID inesistente → NOT_FOUND', call('clienti.get', { id: 'CLI-999999' }, tok).error === 'NOT_FOUND');
 t('dettaglio: ID malformato → NOT_FOUND', call('clienti.get', { id: '../x' }, tok).error === 'NOT_FOUND');
 
+// ---------------------------------------------------------------- inserimento (blocco 4)
+const create = (p) => call('clienti.create', p, tok);
+search('alfa');   // indice in cache: deve aggiornarsi senza ricostruzione
+let c = create({ tipo: 'azienda', ragioneSociale: 'x', citta: '' });
+t('nuovo: errori di validazione per campo', c.ok && c.data.esito === 'errori' && c.data.errori.ragioneSociale && c.data.errori.citta && c.data.errori._generale);
+c = create({ tipo: 'azienda', ragioneSociale: 'Nuova Srl', citta: 'Fano', piva: '01234567890', cf: 'XYZ', email: 'no', cap: '123', telefono: 'abc' });
+t('nuovo: P.IVA, CF, e-mail, CAP, telefono non validi', ['piva', 'cf', 'email', 'cap', 'telefono'].every((k) => c.data.errori[k]));
+c = create({ tipo: 'persona', citta: 'Roma', email: 'p@x.test.invalid' });
+t('nuovo persona: nome e cognome obbligatori', c.data.errori.nome && c.data.errori.cognome);
+c = create({ tipo: 'azienda', ragioneSociale: 'Altra Srl', citta: 'Roma', piva: 'IT 01234567897' });
+t('doppione certo: stessa P.IVA → cliente esistente', c.data.esito === 'duplicato' && c.data.clienti[0].id === 'CLI-000001' && c.data.clienti[0].motivo === 'stessa P.IVA');
+c = create({ tipo: 'persona', nome: 'Mario', cognome: 'Rossi', citta: 'Roma', cf: 'rssmra80a01h501u' });
+t('doppione certo: stesso CF', c.data.esito === 'duplicato' && c.data.clienti[0].id === 'CLI-000004');
+c = create({ tipo: 'azienda', ragioneSociale: 'Zeta Srl', citta: 'Roma', email: 'Bruno.Verdi@alfa.test.invalid' });
+t('doppione certo: e-mail di un referente → suo cliente', c.data.esito === 'duplicato' && c.data.clienti[0].id === 'CLI-000001' && /referente/.test(c.data.clienti[0].motivo));
+c = create({ tipo: 'azienda', ragioneSociale: 'ALFA S.R.L.', citta: 'fano', email: 'info@alfanuova.test.invalid' });
+t('doppione possibile: stesso nome (senza forma giuridica) e città → conferma', c.data.esito === 'simile' && c.data.clienti[0].id === 'CLI-000002');
+c = create({ tipo: 'azienda', ragioneSociale: 'ALFA S.R.L.', citta: 'fano', email: 'info@alfanuova.test.invalid', conferma: true, cap: '01100',
+  referente: { nome: 'Gino', cognome: 'Lupi', email: 'gino@alfanuova.test.invalid' } });
+t('con conferma: creato con ID dal contatore e referente', c.data.esito === 'creato' && c.data.id === 'CLI-000006' && c.data.referenteId === 'REF-000004', JSON.stringify(c.data));
+const nuovo = g.ctx.readTable_('Clienti').find((o) => o.ID_CLIENTE === 'CLI-000006');
+t('riga: origine configuratore, da esportare, creato da utente, CAP con zero', nuovo.ORIGINE === 'configuratore' && nuovo.STATO_HUBSPOT === 'da esportare' &&
+  nuovo.CREATO_DA === 'mario.rossi@test.invalid' && nuovo.CAP === '01100' && nuovo.PAESE === 'Italia' && nuovo.DOMINIO === 'alfanuova.test.invalid' && nuovo.CLIENTE_ELIBRA === '');
+t('scrittura in formato testo, in fondo al foglio', g.formats.some((f) => f.sheet === 'Clienti' && f.f === '@' && f.rows === 1));
+t('contatori aggiornati', g.ctx.readTable_('Contatori').find((o) => o.CHIAVE === 'CLI').VALORE === '6' && g.ctx.readTable_('Contatori').find((o) => o.CHIAVE === 'REF').VALORE === '4');
+r = search('gino lupi');
+t('nuovo cliente e referente subito ricercabili (indice aggiornato)', ids(r) === 'CLI-000006' && r.data.risultati[0].via === 'Gino Lupi');
+t('Log: solo gli ID', g.ctx.readTable_('Log').some((o) => o.AZIONE === 'clienti.create' && o.DETTAGLIO === 'CLI-000006 + REF-000004') &&
+  !g.ctx.readTable_('Log').some((o) => /Lupi|alfanuova/.test(o.DETTAGLIO)));
+c = create({ tipo: 'persona', nome: 'Luca', cognome: 'Mori', citta: 'Pesaro', email: 'luca.mori@x.test.invalid', referente: { nome: 'X' } });
+t('persona: il referente viene ignorato', c.data.esito === 'creato' && !c.data.referenteId);
+c = create({ tipo: 'azienda', ragioneSociale: 'Contatore Srl', citta: 'Roma', email: 'k@k.test.invalid' });
+t('ID libero anche con contatore non allineato', c.data.esito === 'creato' && c.data.id === 'CLI-000008');
+g.ctx.setCounter_('CLI', 1);
+c = create({ tipo: 'azienda', ragioneSociale: 'Disallineato Srl', citta: 'Roma', email: 'd@d.test.invalid' });
+t('contatore indietro: salta gli ID esistenti', c.data.esito === 'creato' && c.data.id === 'CLI-000009', c.data.id);
+t('nuovo cliente senza sessione → SESSION_EXPIRED', call('clienti.create', { tipo: 'azienda' }).error === 'SESSION_EXPIRED');
+
+// referente su cliente esistente
+const addRef = (p) => call('referenti.create', p, tok);
+c = addRef({ idCliente: 'CLI-000003', nome: '', cognome: 'Solo' });
+t('referente: nome obbligatorio', c.data.esito === 'errori' && c.data.errori.nome);
+c = addRef({ idCliente: 'CLI-000003', nome: 'Dario', cognome: 'Rossini' });
+t('referente: stesso nominativo sullo stesso cliente → esistente', c.data.esito === 'duplicato' && c.data.id === 'REF-000003');
+c = addRef({ idCliente: 'CLI-000003', nome: 'Eva', cognome: 'Conti', email: 'eva@beta.test.invalid', telefono: '+39 333 1' });
+t('referente creato', c.data.esito === 'creato' && /^REF-\d{6}$/.test(c.data.id));
+r = call('clienti.get', { id: 'CLI-000003' }, tok);
+t('referente nel dettaglio del cliente', r.data.referenti.some((x) => x.cognome === 'Conti'));
+c = addRef({ idCliente: 'CLI-000003', nome: 'Altra', cognome: 'Persona', email: 'EVA@beta.test.invalid' });
+t('referente: stessa e-mail sullo stesso cliente → esistente', c.data.esito === 'duplicato');
+t('referente su cliente inesistente → NOT_FOUND', addRef({ idCliente: 'CLI-999999', nome: 'a', cognome: 'b' }).error === 'NOT_FOUND');
+t('ricerca trova il referente nuovo', ids(search('eva conti')) === 'CLI-000003');
+
 // cache dell'indice
 t('indice in cache dopo la prima ricerca', g.cache.has('cidx_v1_n'));
-g.ctx.writeTable_('Clienti', g.ctx.readTable_('Clienti').concat([{ ID_CLIENTE: 'CLI-000006', TIPO: 'azienda', RAGIONE_SOCIALE: 'Zeta Nuova', CITTA: 'Rimini', RICERCA: 'zeta nuova rimini' }]));
+g.ctx.writeTable_('Clienti', g.ctx.readTable_('Clienti').concat([{ ID_CLIENTE: 'CLI-000060', TIPO: 'azienda', RAGIONE_SOCIALE: 'Zeta Nuova', CITTA: 'Rimini', RICERCA: 'zeta nuova rimini' }]));
 t('senza invalidazione la cache resta (nessuna rilettura dei fogli)', search('zeta').data.totale === 0);
 g.ctx.invalidateClientiIndex_();
-t('dopo l\'invalidazione il nuovo cliente si trova', ids(search('zeta')) === 'CLI-000006');
+t('dopo l\'invalidazione il nuovo cliente si trova', ids(search('zeta')) === 'CLI-000060');
 g.cache.delete('cidx_v1_1');
 t('blocco di cache mancante → indice ricostruito', search('zeta').ok);
 

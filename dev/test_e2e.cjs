@@ -81,6 +81,55 @@ const t = (n, c) => { console.log(`${c ? '✔' : '✖'} ${n}`); if (!c) fails++;
   t('cliente persona senza referenti', (await page.textContent('#clienteScelto')).includes('Nessun referente') &&
     (await page.textContent('.dati')).includes('RSSMRA80A01H501U'));
 
+  // ---- cliente nuovo (blocco 4)
+  await page.click('#btnCambiaCliente');
+  await page.fill('#clienteQ', 'Impresa Nuova');
+  await page.waitForSelector('#clienteStatus:has-text("Nessun cliente")');
+  await page.click('#btnNuovoCliente');
+  t('modulo nuovo cliente precompilato con la ricerca', (await page.inputValue('#f-ragioneSociale')) === 'Impresa Nuova');
+  await page.click('text=Salva cliente');
+  await page.waitForSelector('#err-citta:not(:empty)');
+  t('campi obbligatori segnalati', (await page.textContent('#nuovoEsito')).includes('almeno uno tra e-mail'));
+  await page.fill('#f-citta', 'Roma');
+  await page.fill('#f-piva', '01234567897');
+  await page.click('text=Salva cliente');
+  await page.waitForSelector('.box.warn');
+  t('doppione certo: mostra il cliente esistente', (await page.textContent('.box.warn')).includes('Alfa Meccanica Srl') &&
+    (await page.textContent('.box.warn')).includes('stessa P.IVA'));
+  await page.screenshot({ path: `${OUT}/07_nuovo_doppione.png` });
+  await page.click('.box.warn button:has-text("Usa questo")');
+  await page.waitForSelector('#clienteScelto h2');
+  t('"Usa questo" seleziona il cliente esistente', (await page.textContent('#clienteScelto h2')) === 'Alfa Meccanica Srl');
+  await page.click('#btnCambiaCliente');
+  await page.fill('#clienteQ', 'alfa');
+  await page.waitForSelector('.result');
+  await page.click('#btnNuovoCliente');
+  await page.fill('#f-citta', 'Fano');
+  await page.fill('#f-email', 'info@alfa-nuova.test.invalid');
+  await page.fill('#f-cap', '61032');
+  await page.fill('#f-referente-nome', 'Gino');
+  await page.fill('#f-referente-cognome', 'Lupi');
+  await page.click('text=Salva cliente');
+  await page.waitForSelector('#btnCreaComunque');
+  t('nome simile nella stessa città: chiede conferma', (await page.textContent('.box.warn')).includes('stesso nome'));
+  await page.click('#btnCreaComunque');
+  await page.waitForSelector('#clienteScelto h2');
+  t('cliente creato e selezionato con il suo referente', (await page.textContent('#clienteScelto h2')) === 'alfa' &&
+    (await page.inputValue('#clienteReferente')).startsWith('REF-') && (await page.textContent('.dati')).includes('inserito dal portale'));
+  await page.click('#btnAggiungiReferente');
+  await page.fill('#f-rnome', 'Eva');
+  await page.fill('#f-rcognome', 'Conti');
+  await page.fill('#f-remail', 'eva@alfa-nuova.test.invalid');
+  await page.click('text=Salva referente');
+  await page.waitForFunction(() => { const s = document.querySelector('#clienteReferente'); return s && s.options[s.selectedIndex].text.includes('Conti'); });
+  t('referente aggiunto e selezionato', (await page.locator('#clienteReferente option').count()) === 3);
+  await page.screenshot({ path: `${OUT}/08_nuovo_creato.png` });
+  await page.click('#btnCambiaCliente');
+  await page.fill('#clienteQ', 'eva conti');
+  await page.waitForSelector('.r-meta:has-text("referente: Eva Conti")');
+  t('nuovo referente subito ricercabile', true);
+  await page.click('.result');
+
   await page.click('text=Avanti →');
   t('navigazione passi', (await page.textContent('.step h1')) === 'Ambito');
   await page.reload();
@@ -104,6 +153,9 @@ const t = (n, c) => { console.log(`${c ? '✔' : '✖'} ${n}`); if (!c) fails++;
   await mobile.waitForSelector('.result');
   t('mobile: ricerca cliente senza scroll orizzontale', (await mobile.evaluate(() => document.documentElement.scrollWidth)) <= 390);
   await mobile.screenshot({ path: `${OUT}/06_cliente_mobile.png` });
+  await mobile.click('#btnNuovoCliente');
+  t('mobile: modulo nuovo cliente senza scroll orizzontale', (await mobile.evaluate(() => document.documentElement.scrollWidth)) <= 390);
+  await mobile.screenshot({ path: `${OUT}/09_nuovo_mobile.png`, fullPage: true });
 
   await page.click('#btnLogout');
   await page.waitForSelector('#email');

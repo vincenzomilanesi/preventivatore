@@ -16,7 +16,9 @@ function routes_() {
     'auth.logout':     { fn: actLogout_, auth: true },
     'app.bootstrap':   { fn: actBootstrap_, auth: true },
     'clienti.search':  { fn: actClientiSearch_, auth: true },
-    'clienti.get':     { fn: actClientiGet_, auth: true }
+    'clienti.get':     { fn: actClientiGet_, auth: true },
+    'clienti.create':  { fn: actClientiCreate_, auth: true },
+    'referenti.create': { fn: actReferentiCreate_, auth: true }
   };
 }
 

@@ -152,6 +152,15 @@ Prova sui file reali (solo locale): 3.387 aziende eLibra (13 scarti, 134 avvisi 
 193 clienti persona, 5.068 referenti; HubSpot: 7.040 nuove + 297 unite a eLibra per P.IVA → **10.620 clienti**
 (2.229 con pratiche), indice di ricerca ~1,3 MB (34 blocchi), reimport = 0 modifiche per tutte le fonti.
 
+**Inserimento dal portale (v0.5.0, blocco 4):** azioni `clienti.create` e `referenti.create` (esiti `errori` /
+`duplicato` / `simile` / `creato`). Obbligatori C6; P.IVA/CF con controllo, CAP 5 cifre se Italia. Doppione certo
+(bloccante): stessa P.IVA, CF (anche CF numerico = P.IVA) o e-mail su cliente o referente → "Usa questo". Doppione
+possibile: stesso nome senza forme giuridiche (S.r.l., SpA, s.s.…) e stessa città → conferma esplicita. Righe aggiunte
+in fondo (formato testo) sotto lock, ID da contatore con salto degli ID già esistenti, ORIGINE=configuratore,
+STATO_HUBSPOT=da esportare, CREATO_DA=e-mail utente; indice di ricerca aggiornato in cache senza ricostruzione; nel Log
+solo gli ID. "+ Aggiungi referente" sul cliente scelto (doppione = stessa e-mail o nominativo sullo stesso cliente).
+Riconciliazione: i successivi import eLibra/HubSpot agganciano i clienti nuovi per P.IVA (aziende) o CF (persone).
+
 **Utenti (24/11):** Martina Cangiotti DIP = OPE, profilo admin confermato. Dominio `bacciardistudiolegale.it` non ammesso.
 
 ## 6. Prossimi passi (19/11)

@@ -646,3 +646,92 @@ function isSearchQueryOk_(q) {
   var s = String(q || '');
   return s.length <= 80 && (normKey_(s).replace(/ /g, '').length >= 2);
 }
+
+// ================================================================== CLIENTI: inserimento dal portale
+var FORME_GIURIDICHE = ['srl', 'srls', 'spa', 'snc', 'sas', 'sapa', 'scarl', 'scrl', 'sc', 'ss', 'coop', 'onlus', 'ets',
+  'ltd', 'limited', 'llc', 'llp', 'inc', 'corp', 'gmbh', 'ag', 'sa', 'sarl', 'sas', 'bv', 'nv', 'plc', 'societa', 'company', 'co'];
+
+/** Nome confrontabile per i doppioni: chiave normalizzata senza forme giuridiche (S.r.l., SpA…). */
+function normName_(v) {
+  // sigle puntate: "s r l" → "srl", "s s" → "ss" (sequenze di lettere singole unite)
+  var words = [], run = '';
+  normKey_(v).split(' ').forEach(function (w) {
+    if (/^[a-z]$/.test(w)) { run += w; return; }
+    if (run) { words.push(run); run = ''; }
+    words.push(w);
+  });
+  if (run) words.push(run);
+  return words.filter(function (w) { return w && FORME_GIURIDICHE.indexOf(w) < 0; }).join(' ');
+}
+
+/**
+ * Validazione del modulo "Nuovo cliente" (decisione C6). Ritorna {errori: {campo: messaggio}, rec, referente}.
+ * rec/referente hanno i nomi delle colonne dei fogli. Nessun accesso ai fogli: i doppioni si controllano dopo.
+ */
+function validateNuovoCliente_(p) {
+  p = p || {};
+  var e = {};
+  var tipo = p.tipo === 'persona' ? 'persona' : p.tipo === 'azienda' ? 'azienda' : '';
+  if (!tipo) e.tipo = 'Scegli azienda o persona fisica.';
+  var rs = cleanText_(p.ragioneSociale, 200), nome = cleanText_(p.nome, 80), cognome = cleanText_(p.cognome, 80);
+  if (tipo === 'azienda' && rs.length < 2) e.ragioneSociale = 'Indica la ragione sociale.';
+  if (tipo === 'persona') {
+    if (!nome) e.nome = 'Indica il nome.';
+    if (!cognome) e.cognome = 'Indica il cognome.';
+  }
+  var paese = normPaese_(p.paese) || 'Italia';
+  var citta = cleanText_(p.citta, 80);
+  if (!citta) e.citta = 'Indica la città.';
+  var pivaRaw = cleanText_(p.piva, 30), piva = normPiva_(pivaRaw);
+  if (pivaRaw && !piva) e.piva = 'P.IVA non valida (11 cifre con cifra di controllo, o P.IVA UE con prefisso del paese).';
+  var cfRaw = cleanText_(p.cf, 20), cf = normCf_(cfRaw);
+  if (cfRaw && !cf) e.cf = 'Codice fiscale non valido.';
+  var email = normalizeEmail_(p.email);
+  if (email && !isValidEmail_(email)) e.email = 'E-mail non valida.';
+  if (!piva && !cf && !email && !e.piva && !e.cf && !e.email) {
+    e._generale = 'Indica almeno uno tra e-mail, P.IVA e codice fiscale: servono a riconoscere il cliente ed evitare doppioni.';
+  }
+  var tel = cleanText_(p.telefono, 40);
+  if (tel && !/^[+0-9 ()./-]{5,40}$/.test(tel)) e.telefono = 'Telefono non valido (solo cifre, spazi e + ( ) . / -).';
+  var cap = cleanText_(p.cap, 12);
+  if (cap && paese === 'Italia' && !/^\d{5}$/.test(cap)) e.cap = 'Il CAP italiano ha 5 cifre.';
+  var rec = {
+    TIPO: tipo, RAGIONE_SOCIALE: tipo === 'azienda' ? rs : '', NOME: tipo === 'persona' ? nome : '',
+    COGNOME: tipo === 'persona' ? cognome : '', PIVA: piva, CF: cf && cf !== piva ? cf : '', EMAIL: email, TELEFONO: tel,
+    INDIRIZZO: cleanText_(p.indirizzo, 150), CAP: cap, CITTA: citta, PROVINCIA: cleanText_(p.provincia, 60), PAESE: paese,
+    DOMINIO: tipo === 'azienda' && email && !e.email && !isMailProviderDomain_(email.split('@')[1]) ? email.split('@')[1] : ''
+  };
+  var referente = null;
+  var r = p.referente || {};
+  if (tipo === 'azienda' && (cleanText_(r.nome) || cleanText_(r.cognome) || cleanText_(r.email) || cleanText_(r.telefono))) {
+    var vr = validateReferente_(r);
+    Object.keys(vr.errori).forEach(function (k) { e['referente.' + k] = vr.errori[k]; });
+    referente = vr.rec;
+  }
+  return { errori: e, rec: rec, referente: referente };
+}
+
+/** Validazione di un referente: nome e cognome obbligatori, e-mail e telefono facoltativi ma controllati. */
+function validateReferente_(r) {
+  r = r || {};
+  var e = {};
+  var nome = cleanText_(r.nome, 80), cognome = cleanText_(r.cognome, 80);
+  if (!nome) e.nome = 'Indica il nome del referente.';
+  if (!cognome) e.cognome = 'Indica il cognome del referente.';
+  var email = normalizeEmail_(r.email);
+  if (email && !isValidEmail_(email)) e.email = 'E-mail del referente non valida.';
+  var tel = cleanText_(r.telefono, 40);
+  if (tel && !/^[+0-9 ()./-]{5,40}$/.test(tel)) e.telefono = 'Telefono del referente non valido.';
+  return { errori: e, rec: { NOME: nome, COGNOME: cognome, EMAIL: email, TELEFONO: tel } };
+}
+
+/** Clienti dell'indice con lo stesso nome (senza forme giuridiche) e la stessa città. */
+function similarClienti_(idx, rec) {
+  var nn = normName_(clienteLabel_(rec)), nc = normKey_(rec.CITTA);
+  var np = rec.TIPO === 'persona' ? personKey_(rec.NOME, rec.COGNOME) : '';
+  if (!nn) return [];
+  return idx.c.filter(function (c) {
+    if (normKey_(c[3]) !== nc) return false;
+    return c[1] === 'persona' && np ? personKey_('', c[2]) === np : normName_(c[2]) === nn;
+  });
+}

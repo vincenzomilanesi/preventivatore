@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var WEB_VERSION = '0.4.0';
+  var WEB_VERSION = '0.5.0';
   var TOKEN_KEY = 'prv_token';        // sessionStorage: la sessione muore con la scheda
   var DRAFT_KEY = 'prv_draft_v1';     // localStorage: bozza del preventivo in corso
 
@@ -43,7 +43,7 @@
   var SEARCH_DELAY_MS = 350;
 
   var state = { view: 'login', email: '', user: null, server: null, step: 0,
-    cliente: { q: '', seq: 0, timer: null, dettaglio: null } };
+    cliente: { q: '', seq: 0, timer: null, dettaglio: null, nuovo: null } };
   var app = document.getElementById('app');
 
   // ------------------------------------------------------------------ util
@@ -158,7 +158,132 @@
   // ------------------------------------------------------------------ passo Cliente
   // Nella bozza (localStorage) restano solo gli ID scelti, mai i dati del cliente.
   function stepCliente(draft) {
-    return draft.cliente && draft.cliente.id ? clienteScelto(draft) : clienteRicerca();
+    if (draft.cliente && draft.cliente.id) return clienteScelto(draft);
+    return state.cliente.nuovo ? clienteNuovo() : clienteRicerca();
+  }
+
+  /** Seleziona il cliente per il preventivo (nella bozza solo gli ID). */
+  function selezionaCliente(id, referenteId) {
+    var d = loadDraft();
+    d.cliente = { id: id };
+    d.referente = referenteId || '';
+    saveDraft(d);
+    state.cliente.dettaglio = null;
+    state.cliente.nuovo = null;
+    render();
+  }
+
+  /** Campo di modulo: etichetta + input + messaggio d'errore (id err-<nome>). */
+  function campo(name, label, attrs, hint) {
+    var a = { id: 'f-' + name.replace('.', '-'), name: name, autocomplete: 'off' };
+    Object.keys(attrs || {}).forEach(function (k) { a[k] = attrs[k]; });
+    var input = el('input', a);
+    return el('div', { class: 'field' + (attrs && attrs['data-wide'] ? ' wide' : '') }, [
+      el('label', { for: a.id, text: label }), input,
+      hint ? el('span', { class: 'hint small', text: hint }) : null,
+      el('span', { class: 'err', id: 'err-' + name.replace('.', '-') })
+    ].filter(Boolean));
+  }
+
+  /** Elenco di clienti esistenti con il pulsante "Usa questo". */
+  function elencoClienti(list) {
+    return el('ul', { class: 'results' }, list.map(function (c) {
+      var meta = [c.citta, c.doc ? 'P.IVA/CF ' + c.doc : '', c.motivo || ''].filter(Boolean).join(' · ');
+      return el('li', {}, [el('div', { class: 'result static' }, [
+        el('span', { class: 'r-nome', text: c.nome || '(senza nome)' }), el('span', { class: 'r-meta', text: meta }),
+        el('button', { type: 'button', class: 'small', text: 'Usa questo', on: { click: function () { selezionaCliente(c.id); } } })
+      ])]);
+    }));
+  }
+
+  function clienteNuovo() {
+    var pre = state.cliente.nuovo;
+    var form = el('form', { class: 'nuovo', id: 'formNuovo', novalidate: 'novalidate' });
+    var esito = el('div', { id: 'nuovoEsito', role: 'alert' });
+    var tipoAz = el('input', { type: 'radio', name: 'tipo', id: 'tipo-azienda', value: 'azienda' });
+    var tipoPf = el('input', { type: 'radio', name: 'tipo', id: 'tipo-persona', value: 'persona' });
+    (pre.tipo === 'persona' ? tipoPf : tipoAz).checked = true;
+    var boxAz = el('div', { class: 'grid' }, [campo('ragioneSociale', 'Ragione sociale *', { 'data-wide': '1', maxlength: '200', value: pre.ragioneSociale || '' })]);
+    var boxPf = el('div', { class: 'grid' }, [
+      campo('nome', 'Nome *', { maxlength: '80', value: pre.nome || '' }), campo('cognome', 'Cognome *', { maxlength: '80', value: pre.cognome || '' })]);
+    var boxRef = el('fieldset', { class: 'ref' }, [
+      el('legend', { text: 'Alla cortese attenzione di (facoltativo)' }),
+      el('div', { class: 'grid' }, [campo('referente.nome', 'Nome', { maxlength: '80' }), campo('referente.cognome', 'Cognome', { maxlength: '80' }),
+        campo('referente.email', 'E-mail', { type: 'email', maxlength: '254' }), campo('referente.telefono', 'Telefono', { type: 'tel', maxlength: '40' })])
+    ]);
+    function syncTipo() { var az = tipoAz.checked; boxAz.hidden = !az; boxRef.hidden = !az; boxPf.hidden = az; }
+    tipoAz.addEventListener('change', syncTipo);
+    tipoPf.addEventListener('change', syncTipo);
+    var btn = el('button', { type: 'submit', class: 'primary', text: 'Salva cliente' });
+    var annulla = el('button', { type: 'button', text: 'Annulla', on: { click: function () { state.cliente.nuovo = null; render(); } } });
+
+    function payload(conferma) {
+      var v = function (n) { var i = form.querySelector('[name="' + n + '"]'); return i ? i.value : ''; };
+      var p = { tipo: tipoAz.checked ? 'azienda' : 'persona', ragioneSociale: v('ragioneSociale'), nome: v('nome'), cognome: v('cognome'),
+        piva: v('piva'), cf: v('cf'), email: v('email'), telefono: v('telefono'), indirizzo: v('indirizzo'), cap: v('cap'),
+        citta: v('citta'), provincia: v('provincia'), paese: v('paese'), conferma: !!conferma };
+      if (tipoAz.checked) p.referente = { nome: v('referente.nome'), cognome: v('referente.cognome'), email: v('referente.email'), telefono: v('referente.telefono') };
+      return p;
+    }
+
+    function invia(conferma) {
+      form.querySelectorAll('.err').forEach(function (x) { x.textContent = ''; });
+      esito.replaceChildren();
+      busy(btn, esito, function () {
+        return api('clienti.create', payload(conferma)).then(function (r) {
+          setTimeout(function () { if (esito.firstChild && esito.scrollIntoView) esito.scrollIntoView({ block: 'nearest' }); }, 0);
+          if (!r.ok) { esito.replaceChildren(el('p', { class: 'msg', text: errText(r.error) })); return; }
+          var d = r.data;
+          if (d.esito === 'creato') { selezionaCliente(d.id, d.referenteId); return; }
+          if (d.esito === 'errori') {
+            Object.keys(d.errori).forEach(function (k) {
+              var sp = document.getElementById('err-' + k.replace('.', '-'));
+              if (sp) sp.textContent = d.errori[k];
+            });
+            if (d.errori._generale) esito.replaceChildren(el('p', { class: 'msg', text: d.errori._generale }));
+            else esito.replaceChildren(el('p', { class: 'msg', text: 'Correggi i campi segnalati.' }));
+            var first = form.querySelector('.err:not(:empty)');
+            if (first && first.parentNode.querySelector('input')) first.parentNode.querySelector('input').focus();
+            return;
+          }
+          if (d.esito === 'duplicato') {
+            esito.replaceChildren(el('div', { class: 'box warn' }, [
+              el('p', { text: 'Questo cliente esiste già (stessi dati identificativi). Usa quello esistente:' }), elencoClienti(d.clienti)]));
+            return;
+          }
+          if (d.esito === 'simile') {
+            esito.replaceChildren(el('div', { class: 'box warn' }, [
+              el('p', { text: 'Ci sono clienti con lo stesso nome nella stessa città. È uno di questi?' }), elencoClienti(d.clienti),
+              el('button', { type: 'button', id: 'btnCreaComunque', text: 'No, è un cliente diverso: crea comunque',
+                on: { click: function () { invia(true); } } })]));
+          }
+        });
+      });
+    }
+    form.addEventListener('submit', function (e) { e.preventDefault(); invia(false); });
+
+    form.append(
+      el('fieldset', { class: 'tipo' }, [el('legend', { text: 'Tipo di cliente' }),
+        el('label', { class: 'radio', for: 'tipo-azienda' }, [tipoAz, ' Azienda']),
+        el('label', { class: 'radio', for: 'tipo-persona' }, [tipoPf, ' Persona fisica'])]),
+      boxAz, boxPf,
+      el('div', { class: 'grid' }, [
+        campo('piva', 'P.IVA', { maxlength: '30', value: pre.piva || '' }), campo('cf', 'Codice fiscale', { maxlength: '20' }),
+        campo('email', 'E-mail', { type: 'email', maxlength: '254', value: pre.email || '' }), campo('telefono', 'Telefono', { type: 'tel', maxlength: '40' }),
+        campo('indirizzo', 'Indirizzo', { 'data-wide': '1', maxlength: '150' }), campo('cap', 'CAP', { maxlength: '12', inputmode: 'numeric' }),
+        campo('citta', 'Città *', { maxlength: '80' }), campo('provincia', 'Provincia', { maxlength: '60' }), campo('paese', 'Paese', { maxlength: '60', value: 'Italia' })]),
+      el('p', { class: 'hint', text: '* obbligatori. Serve anche almeno uno tra e-mail, P.IVA e codice fiscale.' }),
+      boxRef, esito, el('div', { class: 'inline-actions' }, [btn, annulla]));
+    syncTipo();
+    return [el('h2', { text: 'Nuovo cliente' }), form];
+  }
+
+  /** Precompila il modulo con quanto cercato (e-mail, P.IVA o nome). */
+  function precompila(q) {
+    q = String(q || '').trim();
+    if (q.indexOf('@') >= 0) return { email: q };
+    if (/^(IT)?\s*\d{11}$/i.test(q)) return { piva: q };
+    return { ragioneSociale: q };
   }
 
   function clienteRicerca() {
@@ -197,21 +322,16 @@
       });
     }
 
-    function scegli(id) {
-      var d = loadDraft();
-      d.cliente = { id: id };
-      d.referente = '';
-      saveDraft(d);
-      state.cliente.dettaglio = null;
-      render();
-    }
+    function scegli(id) { selezionaCliente(id); }
 
     if (cs.q.trim()) setTimeout(schedule, 0);
     return [
       el('label', { for: 'clienteQ', text: 'Cerca cliente' }), input,
       el('p', { class: 'hint', text: 'Nome, cognome, ragione sociale, P.IVA, codice fiscale o e-mail (anche di un referente).' }),
       status, list,
-      el('p', { class: 'hint', text: 'Cliente non presente? L\'inserimento di un cliente nuovo arriva con il prossimo aggiornamento.' })
+      el('div', { class: 'inline-actions' }, [el('button', { type: 'button', id: 'btnNuovoCliente', text: '+ Nuovo cliente',
+        on: { click: function () { state.cliente.nuovo = precompila(cs.q); render(); } } })]),
+      el('p', { class: 'hint', text: 'Cliente non presente? Inseriscilo come nuovo: verrà controllato che non esista già.' })
     ];
   }
 
@@ -237,7 +357,8 @@
       var rows = [
         ['Tipo', c.tipo === 'persona' ? 'Persona fisica' : 'Azienda'],
         ['Stato', c.cliente_elibra === 'Sì' ? 'Cliente con pratiche (eLibra)' : c.cliente_elibra === 'No'
-          ? 'In anagrafica eLibra, senza pratiche' : 'Contatto HubSpot (non in eLibra)'],
+          ? 'In anagrafica eLibra, senza pratiche' : c.origine === 'configuratore'
+          ? 'Nuovo, inserito dal portale (non ancora in eLibra né in HubSpot)' : 'Contatto HubSpot (non in eLibra)'],
         ['P.IVA', c.piva], ['Codice fiscale', c.cf],
         ['Indirizzo', [c.indirizzo, [c.cap, c.citta].filter(Boolean).join(' '), c.provincia, c.paese].filter(Boolean).join(', ')],
         ['E-mail', c.email], ['Telefono', c.telefono]
@@ -258,7 +379,49 @@
       } else {
         parts.push(el('p', { class: 'hint', text: 'Nessun referente registrato per questo cliente.' }));
       }
+      parts.push(nuovoReferente(c));
       box.replaceChildren.apply(box, parts);
+    }
+
+    function nuovoReferente(c) {
+      var wrap = el('div', { class: 'nuovo-ref' });
+      var apri = el('button', { type: 'button', class: 'link', id: 'btnAggiungiReferente', text: '+ Aggiungi referente', on: { click: function () {
+        var msg = el('div', { role: 'alert' });
+        var f = el('form', { class: 'nuovo', novalidate: 'novalidate' }, [
+          el('div', { class: 'grid' }, [campo('rnome', 'Nome *', { maxlength: '80' }), campo('rcognome', 'Cognome *', { maxlength: '80' }),
+            campo('remail', 'E-mail', { type: 'email', maxlength: '254' }), campo('rtelefono', 'Telefono', { type: 'tel', maxlength: '40' })]),
+          msg]);
+        var salva = el('button', { type: 'submit', class: 'primary', text: 'Salva referente' });
+        var annulla = el('button', { type: 'button', text: 'Annulla', on: { click: function () { wrap.replaceChildren(apri); } } });
+        f.append(el('div', { class: 'inline-actions' }, [salva, annulla]));
+        f.addEventListener('submit', function (e) {
+          e.preventDefault();
+          var v = function (n) { return f.querySelector('[name="' + n + '"]').value; };
+          f.querySelectorAll('.err').forEach(function (x) { x.textContent = ''; });
+          busy(salva, msg, function () {
+            return api('referenti.create', { idCliente: c.id, nome: v('rnome'), cognome: v('rcognome'), email: v('remail'), telefono: v('rtelefono') })
+              .then(function (r) {
+                if (!r.ok) { msg.replaceChildren(el('p', { class: 'msg', text: errText(r.error) })); return; }
+                if (r.data.esito === 'errori') {
+                  var map = { nome: 'rnome', cognome: 'rcognome', email: 'remail', telefono: 'rtelefono' };
+                  Object.keys(r.data.errori).forEach(function (k) { var sp = document.getElementById('err-' + map[k]); if (sp) sp.textContent = r.data.errori[k]; });
+                  return;
+                }
+                var d = loadDraft();
+                d.referente = r.data.id;
+                saveDraft(d);
+                state.cliente.dettaglio = null;
+                if (r.data.esito === 'duplicato') state.cliente.avviso = 'Il referente era già presente: è stato selezionato.';
+                render();
+              });
+          });
+        });
+        wrap.replaceChildren(f);
+        f.querySelector('input').focus();
+      } } });
+      wrap.append(apri);
+      if (state.cliente.avviso) { wrap.prepend(el('p', { class: 'hint ok', role: 'status', text: state.cliente.avviso })); state.cliente.avviso = ''; }
+      return wrap;
     }
     return [box, el('div', { class: 'inline-actions' }, [cambia])];
   }
@@ -293,7 +456,7 @@
   }
 
   document.getElementById('btnLogout').addEventListener('click', function () {
-    api('auth.logout').then(function () { setToken(null); state.user = null; state.cliente.dettaglio = null; go('login'); });
+    api('auth.logout').then(function () { setToken(null); state.user = null; state.cliente.dettaglio = null; state.cliente.nuovo = null; go('login'); });
   });
   document.getElementById('vWeb').textContent = WEB_VERSION;
 
