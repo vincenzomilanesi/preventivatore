@@ -26,7 +26,7 @@ function actClientiGet_(p) {
     return { id: r.ID_REFERENTE, nome: r.NOME, cognome: r.COGNOME, email: r.EMAIL, telefono: r.TELEFONO };
   }).sort(function (a, b) { return (a.cognome + a.nome).localeCompare(b.cognome + b.nome, 'it'); });
   var out = { id: c.ID_CLIENTE, denominazione: clienteLabel_(c), referenti: refs };
-  ['TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF', 'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA',
+  ['CLIENTE_ELIBRA', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF', 'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA',
     'PROVINCIA', 'PAESE', 'ORIGINE', 'STATO_HUBSPOT'].forEach(function (k) { out[k.toLowerCase()] = c[k]; });
   return out;
 }

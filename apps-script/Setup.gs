@@ -9,7 +9,7 @@ function onOpen() {
     .addItem('Svuota cache', 'menuSvuotaCache')
     .addItem('Sblocca utente (limite codici OTP)', 'menuSbloccaUtente')
     .addSeparator()
-    .addItem('Importa da HubSpot (Aziende o Contatti)', 'menuImportaHubspot')
+    .addItem('Importa anagrafiche (eLibra o HubSpot)', 'menuImportaHubspot')
     .addSeparator()
     .addItem('Dati di prova (utente test)', 'menuDatiProva')
     .addToUi();

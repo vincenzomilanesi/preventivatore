@@ -176,7 +176,8 @@ function isMailProviderDomain_(d) {
 
 function normPaese_(v) {
   var s = cleanText_(v, 60);
-  return Object.prototype.hasOwnProperty.call(PAESE_ALIAS, s) ? PAESE_ALIAS[s] : s;
+  var k = s.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PAESE_ALIAS, k) ? PAESE_ALIAS[k] : titleIfUpper_(s);
 }
 
 /**
@@ -229,8 +230,12 @@ function headerIndex_(hdr, aliases) {
   return out;
 }
 
-/** 'aziende' | 'contatti' | '' secondo le intestazioni dell'export HubSpot. */
+/** 'elibra_pg' | 'elibra_pf' | 'aziende' | 'contatti' | '' secondo le intestazioni dell'export. */
 function detectHubspotExport_(hdr) {
+  var pf = headerIndex_(hdr, ELIBRA_COLS.pf);
+  if (pf.ID >= 0 && pf.NOMINATIVO >= 0 && pf.PG >= 0) return 'elibra_pf';
+  var pg = headerIndex_(hdr, ELIBRA_COLS.pg);
+  if (pg.ID >= 0 && pg.NOME >= 0 && pg.CLIENTE >= 0) return 'elibra_pg';
   var c = headerIndex_(hdr, HUBSPOT_COLS.contatti);
   if (c.ID >= 0 && c.COGNOME >= 0 && c.EMAIL >= 0) return 'contatti';
   var a = headerIndex_(hdr, HUBSPOT_COLS.aziende);
@@ -363,45 +368,67 @@ function searchText_(o) {
 }
 
 /**
- * Aggiorna/inserisce record HubSpot in una tabella (Clienti o Referenti). Idempotente: rieseguito sullo stesso
- * export non cambia nulla. Tocca solo le righe ORIGINE=hubspot del tipo indicato e, su quelle, solo `fields`.
- * Non cancella: le righe che non sono più nell'export sono restituite in `assenti`.
- *  existing: oggetti del foglio · incoming: record preparati · opt: {tipo, fields, prefix, nextNum, now, isTarget}
- * Ritorna {rows, nuovi, aggiornati, invariati, assenti[], nextNum}.
+ * Aggiorna/inserisce i record di una fonte (eLibra o HubSpot) in una tabella (Clienti o Referenti).
+ * Idempotente: rieseguito sullo stesso export non cambia nulla. Non cancella: le righe della fonte che non sono
+ * più nell'export sono restituite in `assenti`.
+ *  - aggancio per ID della fonte (opt.idField, più opt.altField per gli ID HubSpot uniti); se non c'è, aggancio
+ *    "di riserva" (opt.fallbackKey: P.IVA, CF, nome del referente…) solo su righe che non hanno ancora quell'ID;
+ *  - campi scritti: opt.fields, oppure opt.fieldsOnOwned se la riga appartiene già alla fonte principale
+ *    (opt.ownerField valorizzato, cioè ID_ELIBRA): così HubSpot non sovrascrive mai i dati di eLibra.
+ * opt: {idField, altField, scope(o), fallbackKey(o|rec), fields, fieldsOnOwned, ownerField, onMatch{},
+ *       newDefaults{}, idCol, prefix, nextNum, now, origine, tipo}
+ * Ritorna {rows, nuovi, aggiornati, invariati, agganciati, assenti[], nextNum}.
  */
-function mergeHubspot_(existing, incoming, opt) {
+function mergeSource_(existing, incoming, opt) {
+  var own = Object.prototype.hasOwnProperty;
   var rows = existing.map(function (o) { var c = {}; Object.keys(o).forEach(function (k) { c[k] = o[k]; }); return c; });
-  var byKey = {};
+  var str = function (v) { return v === undefined || v === null ? '' : String(v); };
+  var byKey = {}, byFb = {};
   rows.forEach(function (o, i) {
-    if (!opt.isTarget(o)) return;
-    [String(o.ID_HUBSPOT || '')].concat(String(o.ID_HUBSPOT_ALTRI || '').split(';')).forEach(function (k) {
-      if (k && !Object.prototype.hasOwnProperty.call(byKey, k)) byKey[k] = i;
-    });
+    if (!opt.scope(o)) return;
+    if (str(o[opt.idField])) {
+      [str(o[opt.idField])].concat(opt.altField ? str(o[opt.altField]).split(';') : []).forEach(function (k) {
+        if (k && !own.call(byKey, k)) byKey[k] = i;
+      });
+    } else if (opt.fallbackKey) {
+      var fk = opt.fallbackKey(o);
+      if (fk && !own.call(byFb, fk)) byFb[fk] = i;
+    }
   });
-  var used = {}, res = { nuovi: 0, aggiornati: 0, invariati: 0, assenti: [], nextNum: opt.nextNum };
+  var used = {};
+  var res = { nuovi: 0, aggiornati: 0, invariati: 0, agganciati: 0, assenti: [], nextNum: opt.nextNum };
   incoming.forEach(function (rec) {
-    var keys = [rec.ID_HUBSPOT].concat(String(rec.ID_HUBSPOT_ALTRI || '').split(';')).filter(String);
+    var keys = [str(rec[opt.idField])].concat(opt.altField ? str(rec[opt.altField]).split(';') : []).filter(String);
     var at = -1;
     for (var i = 0; i < keys.length && at < 0; i++) {
-      if (Object.prototype.hasOwnProperty.call(byKey, keys[i]) && !used[byKey[keys[i]]]) at = byKey[keys[i]];
+      if (own.call(byKey, keys[i]) && !used[byKey[keys[i]]]) at = byKey[keys[i]];
+    }
+    var fb = false;
+    if (at < 0 && opt.fallbackKey) {
+      var fk = opt.fallbackKey(rec);
+      if (fk && own.call(byFb, fk) && !used[byFb[fk]]) { at = byFb[fk]; fb = true; }
     }
     if (at >= 0) {
       used[at] = true;
       var o = rows[at], changed = false;
-      ['ID_HUBSPOT'].concat(opt.fields).forEach(function (f) {
-        var v = rec[f] === undefined ? '' : String(rec[f]);
-        if (String(o[f] === undefined || o[f] === null ? '' : o[f]) !== v) { o[f] = v; changed = true; }
-      });
+      var fields = (opt.ownerField && str(o[opt.ownerField]) && opt.ownerField !== opt.idField) ? opt.fieldsOnOwned : opt.fields;
+      var set = function (f, v) { if (str(o[f]) !== str(v)) { o[f] = str(v); changed = true; } };
+      set(opt.idField, rec[opt.idField]);
+      if (opt.altField) set(opt.altField, rec[opt.altField]);
+      fields.forEach(function (f) { set(f, rec[f]); });
+      Object.keys(opt.onMatch || {}).forEach(function (f) { set(f, opt.onMatch[f]); });
       var rt = searchText_(o);
-      if (o.RICERCA !== rt) { o.RICERCA = rt; changed = true; }
+      if (str(o.RICERCA) !== rt) { o.RICERCA = rt; changed = true; }
+      if (fb) res.agganciati++;
       if (changed) { o.AGGIORNATO_IL = opt.now; res.aggiornati++; } else res.invariati++;
     } else {
-      var n = { };
+      var n = {};
       n[opt.idCol] = opt.prefix + String(res.nextNum++).padStart(6, '0');
-      ['ID_HUBSPOT'].concat(opt.fields).forEach(function (f) { n[f] = rec[f] === undefined ? '' : String(rec[f]); });
+      [opt.idField].concat(opt.altField ? [opt.altField] : [], opt.fields).forEach(function (f) { n[f] = str(rec[f]); });
       if (opt.tipo) n.TIPO = opt.tipo;
-      n.ORIGINE = 'hubspot'; n.STATO_HUBSPOT = 'sincronizzato'; n.CREATO_DA = 'import HubSpot';
-      n.CREATO_IL = opt.now; n.AGGIORNATO_IL = opt.now; n.ESPORTATO_IL = '';
+      n.ORIGINE = opt.origine; n.CREATO_DA = 'import ' + opt.origine; n.CREATO_IL = opt.now; n.AGGIORNATO_IL = opt.now;
+      n.STATO_HUBSPOT = ''; n.ESPORTATO_IL = '';
+      Object.keys(opt.newDefaults || {}).forEach(function (f) { n[f] = opt.newDefaults[f]; });
       n.RICERCA = searchText_(n);
       rows.push(n);
       used[rows.length - 1] = true;
@@ -409,10 +436,142 @@ function mergeHubspot_(existing, incoming, opt) {
     }
   });
   rows.forEach(function (o, i) {
-    if (opt.isTarget(o) && !used[i]) res.assenti.push(String(o.ID_HUBSPOT));
+    if (opt.scope(o) && str(o[opt.idField]) && !used[i]) res.assenti.push(str(o[opt.idField]));
   });
   res.rows = rows;
   return res;
+}
+
+/** Testo in maiuscolo → iniziali maiuscole ("ITALIA" → "Italia"); il resto invariato. */
+function titleIfUpper_(s) {
+  return s && s === s.toUpperCase() && /[A-Z]/.test(s)
+    ? s.toLowerCase().replace(/(^|[\s\-'(])([a-zà-ÿ])/g, function (m, a, b) { return a + b.toUpperCase(); }) : s;
+}
+
+/** Chiave del nominativo indipendente dall'ordine (cognome nome = nome cognome). */
+function personKey_(nome, cognome) {
+  return normKey_([nome, cognome].join(' ')).split(' ').filter(String).sort().join(' ');
+}
+
+/**
+ * Export eLibra Persone giuridiche → record azienda per Clienti. Scarti: senza ID, senza ragione sociale,
+ * ID ripetuto. P.IVA: "Partita IVA", se vuota "Partita IVA UE". P.IVA/CF non validi → vuoti + avviso.
+ * Le P.IVA ripetute in eLibra NON si uniscono (sono anagrafiche distinte): vanno nel report per la pulizia.
+ */
+function prepareElibraPg_(table) {
+  var idx = headerIndex_(table[0] || [], ELIBRA_COLS.pg);
+  var miss = missingCols_(idx, ['ID', 'NOME', 'CLIENTE']);
+  if (miss.length) return { error: 'IMPORT_INTESTAZIONI', mancanti: miss };
+  var get = function (r, k) { return idx[k] >= 0 && r[idx[k]] !== undefined ? r[idx[k]] : ''; };
+  var out = { righe: table.length - 1, records: [], scarti: [], avvisi: [], doppioni: [],
+    colonneAssenti: Object.keys(idx).filter(function (k) { return idx[k] < 0; }) };
+  var seen = {}, byPiva = {};
+  for (var i = 1; i < table.length; i++) {
+    var r = table[i];
+    var id = String(get(r, 'ID')).replace(/\D/g, '');
+    var nome = cleanText_(get(r, 'NOME'), 200);
+    if (!id) { out.scarti.push({ id: '', nome: nome, motivo: 'senza ID' }); continue; }
+    if (seen[id]) { out.scarti.push({ id: id, nome: nome, motivo: 'ID ripetuto nel file' }); continue; }
+    seen[id] = true;
+    if (!nome) { out.scarti.push({ id: id, nome: '', motivo: 'senza ragione sociale' }); continue; }
+    var pRaw = cleanText_(get(r, 'PIVA')) || cleanText_(get(r, 'PIVA_UE'));
+    var piva = normPiva_(pRaw);
+    if (pRaw && !piva) out.avvisi.push({ id: id, nome: nome, motivo: 'P.IVA non valida, non importata: ' + pRaw });
+    var cRaw = cleanText_(get(r, 'CF'));
+    if (/^null$/i.test(cRaw)) cRaw = '';
+    var cf = normCf_(cRaw);
+    if (cRaw && !cf) out.avvisi.push({ id: id, nome: nome, motivo: 'codice fiscale non valido, non importato: ' + cRaw });
+    var rec = { ID_ELIBRA: id, TIPO: 'azienda', RAGIONE_SOCIALE: nome, PIVA: piva, CF: cf === piva ? '' : cf,
+      INDIRIZZO: cleanText_(get(r, 'INDIRIZZO'), 150), CAP: cleanText_(get(r, 'CAP'), 12),
+      CITTA: titleIfUpper_(cleanText_(get(r, 'CITTA'), 80)), PROVINCIA: cleanText_(get(r, 'PROVINCIA'), 60),
+      PAESE: normPaese_(get(r, 'PAESE')), CLIENTE_ELIBRA: isYes_(get(r, 'CLIENTE')) ? 'Sì' : 'No' };
+    out.records.push(rec);
+    if (piva) (byPiva[piva] = byPiva[piva] || []).push(rec);
+  }
+  Object.keys(byPiva).forEach(function (p) {
+    if (byPiva[p].length > 1) out.doppioni.push({ piva: p, ids: byPiva[p].map(function (x) { return x.ID_ELIBRA; }),
+      nome: byPiva[p][0].RAGIONE_SOCIALE });
+  });
+  return out;
+}
+
+/**
+ * Colonna "PG collegata" di eLibra: "Ragione sociale - Ruolo: … - Segmento: …", ripetuta e concatenata senza
+ * separatore quando la persona è collegata a più aziende. Restituisce le ragioni sociali riconosciute: dopo il
+ * primo nome, il successivo è il suffisso più lungo del testo dopo "Segmento:" che corrisponde a un'azienda nota.
+ */
+function parsePgCollegata_(s, known) {
+  var parts = String(s || '').split(' - Ruolo: ');
+  var names = [];
+  if (parts.length < 2) return names;
+  if (normKey_(parts[0])) names.push(cleanText_(parts[0]));
+  for (var i = 1; i < parts.length - 1; i++) {
+    var seg = parts[i].split(' - Segmento: ');
+    var rest = seg.length > 1 ? seg.slice(1).join(' - Segmento: ') : '';
+    for (var k = 0; k < rest.length; k++) {
+      var cand = rest.slice(k);
+      if (own_(known, normKey_(cand))) { names.push(cleanText_(cand)); break; }
+    }
+  }
+  return names;
+}
+
+function own_(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
+
+/**
+ * Export eLibra Persone fisiche → clienti persona (Cliente = SI) e referenti (persone collegate ad aziende già in
+ * Clienti con ID eLibra; aggancio per ragione sociale). Solo nominativo (eLibra ha cognome e nome in un unico
+ * campo: va in COGNOME); ruolo e professione esclusi (decisione 24/11). Scartate le persone non clienti e non
+ * collegate. pgIdx: ragione sociale normalizzata → [ID_CLIENTE…] delle aziende eLibra.
+ * Nel report non compaiono nomi di persone.
+ */
+function prepareElibraPf_(table, pgIdx) {
+  var idx = headerIndex_(table[0] || [], ELIBRA_COLS.pf);
+  var miss = missingCols_(idx, ['ID', 'NOMINATIVO', 'CLIENTE', 'PG']);
+  if (miss.length) return { error: 'IMPORT_INTESTAZIONI', mancanti: miss };
+  var get = function (r, k) { return idx[k] >= 0 && r[idx[k]] !== undefined ? r[idx[k]] : ''; };
+  var out = { righe: table.length - 1, persone: [], referenti: [], scarti: [], avvisi: [],
+    colonneAssenti: Object.keys(idx).filter(function (k) { return idx[k] < 0; }) };
+  var seen = {};
+  for (var i = 1; i < table.length; i++) {
+    var r = table[i];
+    var id = String(get(r, 'ID')).replace(/\D/g, '');
+    if (!id) { out.scarti.push({ id: '', motivo: 'senza ID' }); continue; }
+    if (seen[id]) { out.scarti.push({ id: id, motivo: 'ID ripetuto nel file' }); continue; }
+    seen[id] = true;
+    var nom = cleanText_(get(r, 'NOMINATIVO'), 120);
+    if (!nom) { out.scarti.push({ id: id, motivo: 'senza nominativo' }); continue; }
+    var cliente = isYes_(get(r, 'CLIENTE'));
+    var links = parsePgCollegata_(get(r, 'PG'), pgIdx);
+    if (cliente) {
+      var cRaw = cleanText_(get(r, 'CF'));
+      if (/^null$/i.test(cRaw)) cRaw = '';
+      var cf = normCf_(cRaw);
+      if (cRaw && !cf) out.avvisi.push({ id: id, motivo: 'codice fiscale non valido, non importato' });
+      var pRaw = cleanText_(get(r, 'PIVA'));
+      var piva = normPiva_(pRaw);
+      if (pRaw && !piva) out.avvisi.push({ id: id, motivo: 'P.IVA non valida, non importata' });
+      out.persone.push({ ID_ELIBRA: id, TIPO: 'persona', NOME: '', COGNOME: nom, CF: cf, PIVA: piva,
+        INDIRIZZO: cleanText_(get(r, 'INDIRIZZO'), 150), CAP: cleanText_(get(r, 'CAP'), 12),
+        CITTA: titleIfUpper_(cleanText_(get(r, 'CITTA'), 80)), PROVINCIA: cleanText_(get(r, 'PROVINCIA'), 60),
+        PAESE: normPaese_(get(r, 'PAESE')), CLIENTE_ELIBRA: 'Sì' });
+    }
+    var linked = 0, seenCli = {};
+    links.forEach(function (n) {
+      var ids = pgIdx[normKey_(n)] || [];
+      if (ids.length !== 1) {
+        out.avvisi.push({ id: id, motivo: ids.length ? 'azienda collegata ambigua (più aziende con lo stesso nome), referente non creato'
+          : 'azienda collegata non trovata tra le aziende eLibra' });
+        return;
+      }
+      if (seenCli[ids[0]]) return;
+      seenCli[ids[0]] = true;
+      out.referenti.push({ ID_ELIBRA: id + '/' + ids[0], ID_CLIENTE: ids[0], NOME: '', COGNOME: nom });
+      linked++;
+    });
+    if (!cliente && !linked && !links.length) out.scarti.push({ id: id, motivo: 'non cliente e non collegata ad aziende' });
+  }
+  return out;
 }
 
 // ================================================================== CLIENTI: ricerca
@@ -429,7 +588,8 @@ function clienteLabel_(o) {
 function buildClientiIndex_(clienti, referenti) {
   return {
     c: clienti.filter(function (o) { return o.ID_CLIENTE; }).map(function (o) {
-      return [o.ID_CLIENTE, o.TIPO, clienteLabel_(o), cleanText_(o.CITTA), o.PIVA || o.CF || '', o.RICERCA || searchText_(o)];
+      return [o.ID_CLIENTE, o.TIPO, clienteLabel_(o), cleanText_(o.CITTA), o.PIVA || o.CF || '', o.RICERCA || searchText_(o),
+        o.CLIENTE_ELIBRA === 'Sì' ? 1 : 0];
     }),
     r: referenti.filter(function (o) { return o.ID_CLIENTE; }).map(function (o) {
       return [o.ID_CLIENTE, cleanText_([o.NOME, o.COGNOME].join(' ')), o.RICERCA || searchText_(o)];
@@ -440,8 +600,9 @@ function buildClientiIndex_(clienti, referenti) {
 /**
  * Ricerca: tutti i termini devono comparire (anche come parte di parola) nel testo di ricerca del cliente o di un
  * suo referente. Con "@" si cerca l'e-mail per intero. Ordine: nome uguale, nome che inizia con la ricerca,
- * tutti i termini a inizio parola del nome, altro, trovato tramite referente; poi alfabetico.
- * Ritorna {risultati: [{id, tipo, nome, citta, doc, via}], totale}.
+ * tutti i termini a inizio parola del nome, altro, trovato tramite referente; a parità prima i clienti eLibra
+ * (con pratiche), poi alfabetico.
+ * Ritorna {risultati: [{id, tipo, nome, citta, doc, via, cliente}], totale}.
  */
 function searchIndex_(idx, q, limit) {
   var raw = String(q || '').trim().toLowerCase();
@@ -470,12 +631,12 @@ function searchIndex_(idx, q, limit) {
   });
   var list = Object.keys(hits).map(function (k) { return hits[k]; });
   list.sort(function (a, b) {
-    return a.score - b.score || (a.c[2].toLowerCase() < b.c[2].toLowerCase() ? -1 : a.c[2].toLowerCase() > b.c[2].toLowerCase() ? 1 : 0);
+    return a.score - b.score || ((b.c[6] || 0) - (a.c[6] || 0)) || (a.c[2].toLowerCase() < b.c[2].toLowerCase() ? -1 : a.c[2].toLowerCase() > b.c[2].toLowerCase() ? 1 : 0);
   });
   return {
     totale: list.length,
     risultati: list.slice(0, limit).map(function (h) {
-      return { id: h.c[0], tipo: h.c[1], nome: h.c[2], citta: h.c[3], doc: h.c[4], via: h.via };
+      return { id: h.c[0], tipo: h.c[1], nome: h.c[2], citta: h.c[3], doc: h.c[4], via: h.via, cliente: !!h.c[6] };
     })
   };
 }

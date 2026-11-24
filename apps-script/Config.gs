@@ -12,7 +12,7 @@
  *   OTP_TTL_MIN           validità codice OTP in minuti (default 10)
  *   SESSION_TTL_MIN       durata sessione in minuti, rinnovata a ogni chiamata (default 240, max 360)
  */
-var APP_VERSION = '0.3.0';
+var APP_VERSION = '0.4.0';
 
 /**
  * Valori ammessi nelle tendine del foglio Utenti (create da "Inizializza / verifica struttura").
@@ -31,10 +31,10 @@ var USERS_VALIDATION_ROWS = 500;
 /** Schema dei fogli del Registro: deve restare 1:1 con le future liste SharePoint (fase 2). */
 var REGISTRO_SCHEMA = {
   Utenti: ['EMAIL', 'NOME', 'COGNOME', 'DIP', 'RUOLO', 'PROFILO', 'ATTIVO'],
-  Clienti: ['ID_CLIENTE', 'ID_HUBSPOT', 'ID_HUBSPOT_ALTRI', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF',
+  Clienti: ['ID_CLIENTE', 'ID_ELIBRA', 'ID_HUBSPOT', 'ID_HUBSPOT_ALTRI', 'CLIENTE_ELIBRA', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF',
             'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'DOMINIO', 'ORIGINE',
             'STATO_HUBSPOT', 'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA'],
-  Referenti: ['ID_REFERENTE', 'ID_HUBSPOT', 'ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'ORIGINE',
+  Referenti: ['ID_REFERENTE', 'ID_ELIBRA', 'ID_HUBSPOT', 'ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'ORIGINE',
               'STATO_HUBSPOT', 'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA'],
   Report_import: ['TS', 'IMPORT', 'ESITO', 'ID_HUBSPOT', 'NOME', 'DETTAGLIO'],
   Entita: ['ENTITA', 'RAGIONE_SOCIALE', 'SEDE_LEGALE', 'SEDI', 'PIVA', 'CF', 'PEC', 'TELEFONO', 'EMAIL', 'SITO',
@@ -75,6 +75,32 @@ var HUBSPOT_COLS = {
   }
 };
 
+/** Colonne degli export eLibra (anagrafiche: Persone giuridiche, Persone fisiche), salvati come CSV. */
+var ELIBRA_COLS = {
+  pg: { ID: ['ID'], NOME: ['Ragione Sociale'], PIVA: ['Partita IVA'], PIVA_UE: ['Partita IVA UE'],
+    CF: ['Codice Fiscale'], INDIRIZZO: ['Indirizzo'], CAP: ['CAP'], CITTA: ['Città'], PROVINCIA: ['Provincia'],
+    PAESE: ['Paese'], CLIENTE: ['Cliente'] },
+  pf: { ID: ['ID'], NOMINATIVO: ['Cognome e Nome'], CF: ['Codice Fiscale'], PIVA: ['Partita IVA'],
+    INDIRIZZO: ['Indirizzo'], CAP: ['CAP'], CITTA: ['Città'], PROVINCIA: ['Provincia'], PAESE: ['Paese'],
+    PG: ['PG collegata'], CLIENTE: ['Cliente'] }
+};
+
+/**
+ * Campi scritti da ciascuna fonte (decisione 24/11: eLibra principale). Su una riga che ha già ID_ELIBRA,
+ * HubSpot scrive solo i campi "_SU_ELIBRA" (dominio, telefono, e-mail), mai quelli anagrafici/fiscali.
+ */
+var FIELDS = {
+  ELIBRA_AZIENDA: ['RAGIONE_SOCIALE', 'PIVA', 'CF', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'CLIENTE_ELIBRA'],
+  ELIBRA_PERSONA: ['NOME', 'COGNOME', 'CF', 'PIVA', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'CLIENTE_ELIBRA'],
+  ELIBRA_REFERENTE: ['ID_CLIENTE', 'NOME', 'COGNOME'],
+  HUBSPOT_AZIENDA: ['RAGIONE_SOCIALE', 'PIVA', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'DOMINIO'],
+  HUBSPOT_AZIENDA_SU_ELIBRA: ['TELEFONO', 'DOMINIO'],
+  HUBSPOT_PERSONA: ['NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'CF'],
+  HUBSPOT_PERSONA_SU_ELIBRA: ['EMAIL', 'TELEFONO'],
+  HUBSPOT_REFERENTE: ['ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO'],
+  HUBSPOT_REFERENTE_SU_ELIBRA: ['EMAIL', 'TELEFONO']
+};
+
 /** Fasi del ciclo di vita "oltre Lead": i contatti senza azienda in queste fasi diventano clienti persona (C4). */
 var HUBSPOT_FASI_AVANZATE = ['Lead qualificato per il marketing', 'Lead qualificato per le vendite', 'Opportunità',
   'Cliente', 'Evangelist', 'Marketing Qualified Lead', 'Sales Qualified Lead', 'Opportunity', 'Customer'];
@@ -85,8 +111,31 @@ var MAIL_PROVIDER_DOMAINS = ['191.it', 'gmail.com', 'googlemail.com', 'libero.it
   'live.it', 'icloud.com', 'me.com', 'fastwebnet.it', 'email.it', 'inwind.it', 'iol.it', 'msn.com', 'aol.com',
   'gmx.com', 'gmx.de', 'teletu.it', 'katamail.com', 'pec.it', 'legalmail.it', 'postecert.it', 'arubapec.it'];
 
-var PAESE_ALIAS = { 'United States of America': 'United States', 'England': 'United Kingdom',
-  'Scotland': 'United Kingdom', 'Wales': 'United Kingdom', 'Northern Ireland': 'United Kingdom' };
+/**
+ * Paesi in italiano, uguali per eLibra e HubSpot (chiave: nome in minuscolo come arriva dalle fonti).
+ * I nomi non in tabella restano come sono (con iniziali maiuscole se erano tutti maiuscoli).
+ */
+var PAESE_ALIAS = {
+  'italy': 'Italia', 'italia': 'Italia', 'it': 'Italia', 'united states': 'Stati Uniti', 'united states of america': 'Stati Uniti',
+  'usa': 'Stati Uniti', 'stati uniti d\'america': 'Stati Uniti', 'united kingdom': 'Regno Unito', 'uk': 'Regno Unito',
+  'england': 'Regno Unito', 'scotland': 'Regno Unito', 'wales': 'Regno Unito', 'northern ireland': 'Regno Unito',
+  'great britain': 'Regno Unito', 'france': 'Francia', 'germany': 'Germania', 'canada': 'Canada', 'switzerland': 'Svizzera',
+  'india': 'India', 'san marino': 'San Marino', 'rsm': 'San Marino', 'rep. san marino': 'San Marino',
+  'repubblica di san marino': 'San Marino', 'netherlands': 'Paesi Bassi', 'the netherlands': 'Paesi Bassi',
+  'brazil': 'Brasile', 'spain': 'Spagna', 'espana': 'Spagna', 'españa': 'Spagna', 'belgium': 'Belgio',
+  'australia': 'Australia', 'japan': 'Giappone', 'mexico': 'Messico', 'sweden': 'Svezia', 'china': 'Cina',
+  'cyprus': 'Cipro', 'singapore': 'Singapore', 'united arab emirates': 'Emirati Arabi Uniti', 'south africa': 'Sudafrica',
+  'malta': 'Malta', 'portugal': 'Portogallo', 'poland': 'Polonia', 'hong kong': 'Hong Kong', 'nigeria': 'Nigeria',
+  'turkey': 'Turchia', 'türkiye': 'Turchia', 'romania': 'Romania', 'luxembourg': 'Lussemburgo', 'israel': 'Israele',
+  'finland': 'Finlandia', 'austria': 'Austria', 'hungary': 'Ungheria', 'indonesia': 'Indonesia', 'philippines': 'Filippine',
+  'czech republic': 'Repubblica Ceca', 'czechia': 'Repubblica Ceca', 'ireland': 'Irlanda', 'new zealand': 'Nuova Zelanda',
+  'bulgaria': 'Bulgaria', 'denmark': 'Danimarca', 'norway': 'Norvegia', 'croatia': 'Croazia',
+  'russian federation': 'Russia', 'federazione russa': 'Russia', 'russia': 'Russia', 'saudi arabia': 'Arabia Saudita',
+  'malaysia': 'Malesia', 'egypt': 'Egitto', 'kazakhstan': 'Kazakistan', 'argentina': 'Argentina', 'mauritius': 'Mauritius',
+  'panama': 'Panama', 'lebanon': 'Libano', 'greece': 'Grecia', 'korea, republic of': 'Corea del Sud', 'south korea': 'Corea del Sud',
+  'thailand': 'Thailandia', 'slovenia': 'Slovenia', 'serbia': 'Serbia', 'albania': 'Albania', 'tunisia': 'Tunisia',
+  'slovakia': 'Slovacchia', 'monaco': 'Monaco', 'liechtenstein': 'Liechtenstein', 'morocco': 'Marocco', 'qatar': 'Qatar'
+};
 
 var DB_CATALOGO_SHEETS = ['SERVIZI', 'ATTIVITA', 'PILLAR', '_LISTE'];
 

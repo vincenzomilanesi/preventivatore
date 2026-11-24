@@ -57,12 +57,13 @@ const t = (n, c) => { console.log(`${c ? '✔' : '✖'} ${n}`); if (!c) fails++;
   t('nessun risultato segnalato', (await page.locator('.result').count()) === 0);
   await page.fill('#clienteQ', 'bruno.verdi@alfa.test.invalid');
   await page.waitForSelector('.r-meta:has-text("referente: Bruno Verdi")');
-  t('ricerca per e-mail del referente', (await page.locator('.result').count()) === 1);
+  t('ricerca per e-mail del referente', (await page.locator('.result').count()) === 1 &&
+    (await page.textContent('.r-meta')).includes('cliente con pratiche'));
   await page.screenshot({ path: `${OUT}/04_cliente_ricerca.png` });
   await page.click('.result');
   await page.waitForSelector('#clienteScelto h2');
   t('cliente scelto: dati mostrati', (await page.textContent('#clienteScelto h2')) === 'Alfa Meccanica Srl' &&
-    (await page.textContent('.dati')).includes('01234567897'));
+    (await page.textContent('.dati')).includes('01234567897') && (await page.textContent('.dati')).includes('Cliente con pratiche'));
   t('referenti nel menu', (await page.locator('#clienteReferente option').count()) === 3);
   await page.selectOption('#clienteReferente', 'REF-000002');
   await page.screenshot({ path: `${OUT}/05_cliente_scelto.png` });

@@ -24,7 +24,7 @@ t('ricerca troppo corta → QUERY_INVALID', search('a').error === 'QUERY_INVALID
 t('ricerca troppo lunga → QUERY_INVALID', search('x'.repeat(81)).error === 'QUERY_INVALID');
 let r = search('alfa');
 t('per ragione sociale: ordine nome uguale, inizia con, a inizio parola', r.ok && ids(r) === 'CLI-000002,CLI-000001,CLI-000005', ids(r));
-t('risultato con solo i campi da mostrare', JSON.stringify(Object.keys(r.data.risultati[0]).sort()) === '["citta","doc","id","nome","tipo","via"]');
+t('risultato con solo i campi da mostrare', JSON.stringify(Object.keys(r.data.risultati[0]).sort()) === '["citta","cliente","doc","id","nome","tipo","via"]');
 r = search('SOCIETA agric');
 t('senza accenti, maiuscole, più termini, parole parziali', ids(r) === 'CLI-000003');
 r = search('Neri');

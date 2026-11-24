@@ -1,37 +1,35 @@
 /**
- * Import da HubSpot (decisioni C2–C9, SPEC §5bis). Lo lancia un admin (Comunicazione/Marketing) dal menu del
- * foglio Registro dopo aver messo l'export CSV nella cartella Drive "import_hubspot".
- *  1. prima l'export Aziende → foglio Clienti (TIPO azienda);
- *  2. poi l'export Contatti → foglio Referenti (contatti delle aziende) + Clienti (TIPO persona, fase oltre Lead).
- * Idempotente: rilanciato sullo stesso file non cambia nulla. Non cancella righe: quelle non più presenti in
- * HubSpot sono elencate nel foglio Report_import. Il file importato viene spostato nel cestino di Drive
- * (minimizzazione: l'export resta solo in HubSpot).
+ * Import delle anagrafiche (decisioni C2–C9 e 24/11, SPEC §5bis/§5ter). Lo lancia un admin dal menu del foglio
+ * Registro dopo aver messo UN file CSV nella cartella Drive "import_hubspot" (accetta anche gli export eLibra).
+ * Ordine: 1) eLibra Persone giuridiche  2) eLibra Persone fisiche  3) HubSpot Aziende  4) HubSpot Contatti.
+ * eLibra è la fonte principale: su una riga con ID_ELIBRA, HubSpot aggiunge solo dominio, telefono, e-mail.
+ * Idempotente; non cancella righe (quelle non più presenti nella fonte vanno nel foglio Report_import); il file
+ * importato viene spostato nel cestino di Drive.
  */
-var CLIENTI_FIELDS_AZIENDA = ['ID_HUBSPOT_ALTRI', 'RAGIONE_SOCIALE', 'PIVA', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA',
-  'PROVINCIA', 'PAESE', 'DOMINIO'];
-var CLIENTI_FIELDS_PERSONA = ['NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'CF'];
-var REFERENTI_FIELDS = ['ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO'];
 var REPORT_MAX_RIGHE = 5000;
+var IMPORT_LABEL = { elibra_pg: 'eLibra – Persone giuridiche', elibra_pf: 'eLibra – Persone fisiche',
+  aziende: 'HubSpot – Aziende', contatti: 'HubSpot – Contatti' };
 
 function menuImportaHubspot() {
   var ui = SpreadsheetApp.getUi();
   var files = importFiles_();
   if (!files.length) {
     return ui.alert('Nessun file CSV nella cartella "import_hubspot" (accanto a questo foglio). ' +
-      'Esporta da HubSpot, carica il file in quella cartella e riprova.');
+      'Carica l\'export (eLibra salvato come CSV, oppure HubSpot) in quella cartella e riprova.');
   }
   if (files.length > 1) {
     return ui.alert('Nella cartella "import_hubspot" ci sono ' + files.length + ' file CSV. ' +
-      'Lascia solo quello da importare (prima Aziende, poi Contatti) e riprova.');
+      'Lascia solo quello da importare e riprova. Ordine: eLibra Persone giuridiche, eLibra Persone fisiche, ' +
+      'HubSpot Aziende, HubSpot Contatti.');
   }
   var file = files[0];
   var table = parseCsv_(file.getBlob().getDataAsString('UTF-8'));
   var tipo = table.length ? detectHubspotExport_(table[0]) : '';
   if (!tipo) {
-    return ui.alert('Il file "' + file.getName() + '" non sembra un export Aziende o Contatti di HubSpot ' +
-      '(mancano le colonne ID record / Nome azienda oppure Nome / Cognome / E-mail).');
+    return ui.alert('Il file "' + file.getName() + '" non è un export riconosciuto (eLibra Persone giuridiche o ' +
+      'fisiche, HubSpot Aziende o Contatti). Controlla di averlo salvato come CSV con la prima riga di intestazioni.');
   }
-  var ok = ui.alert('Importa da HubSpot', 'File: ' + file.getName() + '\nTipo: ' + tipo + '\nRighe: ' +
+  var ok = ui.alert('Importa anagrafiche', 'File: ' + file.getName() + '\nTipo: ' + IMPORT_LABEL[tipo] + '\nRighe: ' +
     (table.length - 1) + '\n\nProcedo con l\'import?', ui.ButtonSet.YES_NO);
   if (ok !== ui.Button.YES) return;
   var res = importHubspot_(table, tipo, file.getName());
@@ -62,7 +60,8 @@ function importHubspot_(table, tipo, fileName) {
   lock.waitLock(30000);
   var res;
   try {
-    res = tipo === 'aziende' ? importAziende_(table, now) : importContatti_(table, now);
+    res = { elibra_pg: importElibraPg_, elibra_pf: importElibraPf_, aziende: importAziende_,
+      contatti: importContatti_ }[tipo](table, now);
     if (res.ok) {
       writeReport_(tipo, now, res.report);
       invalidateClientiIndex_();
@@ -74,13 +73,81 @@ function importHubspot_(table, tipo, fileName) {
   return res;
 }
 
+var SCOPE_AZIENDA = function (o) { return o.TIPO === 'azienda'; };
+var SCOPE_PERSONA = function (o) { return o.TIPO === 'persona'; };
+var SCOPE_TUTTI = function () { return true; };
+
+function importElibraPg_(table, now) {
+  var p = prepareElibraPg_(table);
+  if (p.error) return headerError_(p);
+  var m = mergeSource_(readTable_('Clienti'), p.records, {
+    idField: 'ID_ELIBRA', scope: SCOPE_AZIENDA, fields: FIELDS.ELIBRA_AZIENDA, ownerField: 'ID_ELIBRA',
+    fallbackKey: function (o) { return o.PIVA ? 'piva:' + o.PIVA : ''; },
+    idCol: 'ID_CLIENTE', prefix: 'CLI-', nextNum: counter_('CLI'), now: now, origine: 'elibra', tipo: 'azienda'
+  });
+  writeTable_('Clienti', m.rows);
+  setCounter_('CLI', m.nextNum);
+  var report = [];
+  p.scarti.forEach(function (s) { report.push(['scartata', s.id, s.nome, s.motivo]); });
+  p.avvisi.forEach(function (s) { report.push(['avviso', s.id, s.nome, s.motivo]); });
+  p.doppioni.forEach(function (d) {
+    report.push(['P.IVA ripetuta in eLibra', d.ids.join(', '), d.nome, 'P.IVA ' + d.piva + ': anagrafiche distinte, da verificare in eLibra']);
+  });
+  m.assenti.forEach(function (id) { report.push(['non più in eLibra', id, nomeDa_(m.rows, 'ID_ELIBRA', id), 'riga mantenuta']); });
+  return done_(report, p, { nuovi: m.nuovi, aggiornati: m.aggiornati, invariati: m.invariati, agganciati: m.agganciati,
+    assenti: m.assenti.length }, ['Aziende nel file: ' + p.righe,
+    'Nuove: ' + m.nuovi + ' · aggiornate: ' + m.aggiornati + ' · invariate: ' + m.invariati +
+      (m.agganciati ? ' (di cui ' + m.agganciati + ' unite a righe HubSpot per P.IVA)' : ''),
+    'Scartate: ' + p.scarti.length + ' · avvisi: ' + p.avvisi.length + ' · P.IVA ripetute in eLibra: ' + p.doppioni.length,
+    'Non più presenti in eLibra (mantenute): ' + m.assenti.length]);
+}
+
+function importElibraPf_(table, now) {
+  var clienti = readTable_('Clienti');
+  var pgIdx = {};
+  clienti.forEach(function (o) {
+    if (o.TIPO !== 'azienda' || !o.ID_ELIBRA) return;
+    var k = normKey_(o.RAGIONE_SOCIALE);
+    if (k) (pgIdx[k] = pgIdx[k] || []).push(o.ID_CLIENTE);
+  });
+  if (!Object.keys(pgIdx).length) {
+    return { ok: false, lines: ['Il foglio Clienti non contiene aziende eLibra: importare prima eLibra Persone giuridiche.'] };
+  }
+  var p = prepareElibraPf_(table, pgIdx);
+  if (p.error) return headerError_(p);
+  var mp = mergeSource_(clienti, p.persone, {
+    idField: 'ID_ELIBRA', scope: SCOPE_PERSONA, fields: FIELDS.ELIBRA_PERSONA, ownerField: 'ID_ELIBRA',
+    fallbackKey: function (o) { return o.CF ? 'cf:' + o.CF : ''; },
+    idCol: 'ID_CLIENTE', prefix: 'CLI-', nextNum: counter_('CLI'), now: now, origine: 'elibra', tipo: 'persona'
+  });
+  var mr = mergeSource_(readTable_('Referenti'), p.referenti, {
+    idField: 'ID_ELIBRA', scope: SCOPE_TUTTI, fields: FIELDS.ELIBRA_REFERENTE, ownerField: 'ID_ELIBRA',
+    fallbackKey: refKey_, idCol: 'ID_REFERENTE', prefix: 'REF-', nextNum: counter_('REF'), now: now, origine: 'elibra'
+  });
+  writeTable_('Clienti', mp.rows);
+  writeTable_('Referenti', mr.rows);
+  setCounter_('CLI', mp.nextNum);
+  setCounter_('REF', mr.nextNum);
+  var report = countReport_(p);
+  mr.assenti.forEach(function (id) { report.push(['referente non più in eLibra', id, '', 'riga mantenuta']); });
+  mp.assenti.forEach(function (id) { report.push(['persona non più in eLibra', id, '', 'riga mantenuta']); });
+  return done_(report, p, { personeNuove: mp.nuovi, personeAggiornate: mp.aggiornati, personeInvariate: mp.invariati,
+    referentiNuovi: mr.nuovi, referentiAggiornati: mr.aggiornati, referentiInvariati: mr.invariati,
+    personeAssenti: mp.assenti.length, referentiAssenti: mr.assenti.length }, ['Persone nel file: ' + p.righe,
+    'Clienti persona fisica: nuovi ' + mp.nuovi + ' · aggiornati ' + mp.aggiornati + ' · invariati ' + mp.invariati,
+    'Referenti di aziende: nuovi ' + mr.nuovi + ' · aggiornati ' + mr.aggiornati + ' · invariati ' + mr.invariati,
+    'Non importate: ' + p.scarti.length + ' · avvisi: ' + p.avvisi.length,
+    'Non più presenti in eLibra (mantenuti): persone ' + mp.assenti.length + ', referenti ' + mr.assenti.length]);
+}
+
 function importAziende_(table, now) {
   var p = prepareAziende_(table);
   if (p.error) return headerError_(p);
-  var clienti = readTable_('Clienti');
-  var m = mergeHubspot_(clienti, p.records, {
-    idCol: 'ID_CLIENTE', prefix: 'CLI-', tipo: 'azienda', fields: CLIENTI_FIELDS_AZIENDA, now: now,
-    nextNum: counter_('CLI'), isTarget: function (o) { return o.ORIGINE === 'hubspot' && o.TIPO === 'azienda'; }
+  var m = mergeSource_(readTable_('Clienti'), p.records, {
+    idField: 'ID_HUBSPOT', altField: 'ID_HUBSPOT_ALTRI', scope: SCOPE_AZIENDA, fields: FIELDS.HUBSPOT_AZIENDA,
+    fieldsOnOwned: FIELDS.HUBSPOT_AZIENDA_SU_ELIBRA, ownerField: 'ID_ELIBRA', onMatch: { STATO_HUBSPOT: 'sincronizzato' },
+    newDefaults: { STATO_HUBSPOT: 'sincronizzato' }, fallbackKey: function (o) { return o.PIVA ? 'piva:' + o.PIVA : ''; },
+    idCol: 'ID_CLIENTE', prefix: 'CLI-', nextNum: counter_('CLI'), now: now, origine: 'hubspot', tipo: 'azienda'
   });
   writeTable_('Clienti', m.rows);
   setCounter_('CLI', m.nextNum);
@@ -91,77 +158,91 @@ function importAziende_(table, now) {
     report.push(['doppione P.IVA', d.tenuto, d.nome, 'P.IVA ' + d.piva + ': tenuto ' + d.tenuto + ', da unire in HubSpot: ' +
       d.uniti.join(', ')]);
   });
-  m.assenti.forEach(function (id) { report.push(['non più in HubSpot', id, nomeCliente_(m.rows, id), 'riga mantenuta']); });
-  return {
-    ok: true, report: report,
-    stats: { righe: p.righe, nuovi: m.nuovi, aggiornati: m.aggiornati, invariati: m.invariati, scarti: p.scarti.length,
-      avvisi: p.avvisi.length, doppioni: p.doppioni.length, assenti: m.assenti.length },
-    lines: ['Aziende nel file: ' + p.righe,
-      'Nuove: ' + m.nuovi + ' · aggiornate: ' + m.aggiornati + ' · invariate: ' + m.invariati,
-      'Scartate: ' + p.scarti.length + ' · avvisi: ' + p.avvisi.length,
-      'P.IVA doppie (unite): ' + p.doppioni.length + ' gruppi',
-      'Non più presenti in HubSpot (mantenute): ' + m.assenti.length]
-      .concat(p.colonneAssenti.length ? ['Colonne non trovate nel file: ' + p.colonneAssenti.join(', ')] : [])
-      .concat(['Dettaglio nel foglio Report_import.'])
-  };
+  m.assenti.forEach(function (id) { report.push(['non più in HubSpot', id, nomeDa_(m.rows, 'ID_HUBSPOT', id), 'riga mantenuta']); });
+  return done_(report, p, { nuovi: m.nuovi, aggiornati: m.aggiornati, invariati: m.invariati, agganciati: m.agganciati,
+    doppioni: p.doppioni.length, assenti: m.assenti.length }, ['Aziende nel file: ' + p.righe,
+    'Nuove: ' + m.nuovi + ' · aggiornate: ' + m.aggiornati + ' · invariate: ' + m.invariati +
+      (m.agganciati ? ' (di cui ' + m.agganciati + ' unite a clienti eLibra per P.IVA)' : ''),
+    'Scartate: ' + p.scarti.length + ' · avvisi: ' + p.avvisi.length,
+    'P.IVA doppie (unite): ' + p.doppioni.length + ' gruppi',
+    'Non più presenti in HubSpot (mantenute): ' + m.assenti.length]);
 }
 
 function importContatti_(table, now) {
   var clienti = readTable_('Clienti');
   var aziendaIdx = {};
   clienti.forEach(function (o) {
-    if (o.TIPO !== 'azienda' || !o.ID_CLIENTE) return;
-    [String(o.ID_HUBSPOT || '')].concat(String(o.ID_HUBSPOT_ALTRI || '').split(';')).forEach(function (k) {
+    if (o.TIPO !== 'azienda' || !o.ID_CLIENTE || !o.ID_HUBSPOT) return;
+    [String(o.ID_HUBSPOT)].concat(String(o.ID_HUBSPOT_ALTRI || '').split(';')).forEach(function (k) {
       if (k) aziendaIdx[k] = o.ID_CLIENTE;
     });
   });
   if (!Object.keys(aziendaIdx).length) {
-    return { ok: false, lines: ['Il foglio Clienti non contiene aziende: importare prima l\'export Aziende.'] };
+    return { ok: false, lines: ['Il foglio Clienti non contiene aziende HubSpot: importare prima l\'export Aziende di HubSpot.'] };
   }
   var p = prepareContatti_(table, aziendaIdx);
   if (p.error) return headerError_(p);
-  var mp = mergeHubspot_(clienti, p.persone, {
-    idCol: 'ID_CLIENTE', prefix: 'CLI-', tipo: 'persona', fields: CLIENTI_FIELDS_PERSONA, now: now,
-    nextNum: counter_('CLI'), isTarget: function (o) { return o.ORIGINE === 'hubspot' && o.TIPO === 'persona'; }
+  var mp = mergeSource_(clienti, p.persone, {
+    idField: 'ID_HUBSPOT', scope: SCOPE_PERSONA, fields: FIELDS.HUBSPOT_PERSONA, fieldsOnOwned: FIELDS.HUBSPOT_PERSONA_SU_ELIBRA,
+    ownerField: 'ID_ELIBRA', onMatch: { STATO_HUBSPOT: 'sincronizzato' }, newDefaults: { STATO_HUBSPOT: 'sincronizzato' },
+    fallbackKey: function (o) { return o.CF ? 'cf:' + o.CF : ''; },
+    idCol: 'ID_CLIENTE', prefix: 'CLI-', nextNum: counter_('CLI'), now: now, origine: 'hubspot', tipo: 'persona'
   });
-  var mr = mergeHubspot_(readTable_('Referenti'), p.referenti, {
-    idCol: 'ID_REFERENTE', prefix: 'REF-', tipo: '', fields: REFERENTI_FIELDS, now: now,
-    nextNum: counter_('REF'), isTarget: function (o) { return o.ORIGINE === 'hubspot'; }
+  var mr = mergeSource_(readTable_('Referenti'), p.referenti, {
+    idField: 'ID_HUBSPOT', scope: SCOPE_TUTTI, fields: FIELDS.HUBSPOT_REFERENTE, fieldsOnOwned: FIELDS.HUBSPOT_REFERENTE_SU_ELIBRA,
+    ownerField: 'ID_ELIBRA', onMatch: { STATO_HUBSPOT: 'sincronizzato' }, newDefaults: { STATO_HUBSPOT: 'sincronizzato' },
+    fallbackKey: refKey_, idCol: 'ID_REFERENTE', prefix: 'REF-', nextNum: counter_('REF'), now: now, origine: 'hubspot'
   });
   writeTable_('Clienti', mp.rows);
   writeTable_('Referenti', mr.rows);
   setCounter_('CLI', mp.nextNum);
   setCounter_('REF', mr.nextNum);
-  // Report senza nomi delle persone (minimizzazione): scarti contati per motivo, avvisi e assenti per ID
-  var report = [], perMotivo = {};
-  p.scarti.forEach(function (s) { perMotivo[s.motivo] = (perMotivo[s.motivo] || 0) + 1; });
-  Object.keys(perMotivo).forEach(function (k) { report.push(['scartati', '', '', perMotivo[k] + ' contatti: ' + k]); });
-  p.avvisi.forEach(function (s) { report.push(['avviso', s.id, '', s.motivo]); });
+  var report = countReport_(p);
   mr.assenti.forEach(function (id) { report.push(['referente non più in HubSpot', id, '', 'riga mantenuta']); });
   mp.assenti.forEach(function (id) { report.push(['persona non più in HubSpot', id, '', 'riga mantenuta']); });
-  return {
-    ok: true, report: report,
-    stats: { righe: p.righe, referentiNuovi: mr.nuovi, referentiAggiornati: mr.aggiornati, referentiInvariati: mr.invariati,
-      personeNuove: mp.nuovi, personeAggiornate: mp.aggiornati, personeInvariate: mp.invariati, scarti: p.scarti.length,
-      avvisi: p.avvisi.length, referentiAssenti: mr.assenti.length, personeAssenti: mp.assenti.length },
-    lines: ['Contatti nel file: ' + p.righe,
-      'Referenti (contatti di aziende): nuovi ' + mr.nuovi + ' · aggiornati ' + mr.aggiornati + ' · invariati ' + mr.invariati,
+  return done_(report, p, { referentiNuovi: mr.nuovi, referentiAggiornati: mr.aggiornati, referentiInvariati: mr.invariati,
+    referentiAgganciati: mr.agganciati, personeNuove: mp.nuovi, personeAggiornate: mp.aggiornati,
+    personeInvariate: mp.invariati, referentiAssenti: mr.assenti.length, personeAssenti: mp.assenti.length },
+    ['Contatti nel file: ' + p.righe,
+      'Referenti (contatti di aziende): nuovi ' + mr.nuovi + ' · aggiornati ' + mr.aggiornati + ' · invariati ' + mr.invariati +
+        (mr.agganciati ? ' (di cui ' + mr.agganciati + ' uniti a referenti eLibra per nome)' : ''),
       'Clienti persona fisica (fase oltre Lead): nuovi ' + mp.nuovi + ' · aggiornati ' + mp.aggiornati + ' · invariati ' +
         mp.invariati,
       'Non importati: ' + p.scarti.length + ' · avvisi: ' + p.avvisi.length,
-      'Non più presenti in HubSpot (mantenuti): referenti ' + mr.assenti.length + ', persone ' + mp.assenti.length]
-      .concat(p.colonneAssenti.length ? ['Colonne non trovate nel file: ' + p.colonneAssenti.join(', ')] : [])
-      .concat(['Dettaglio nel foglio Report_import.'])
-  };
+      'Non più presenti in HubSpot (mantenuti): referenti ' + mr.assenti.length + ', persone ' + mp.assenti.length]);
+}
+
+/** Aggancio di riserva dei referenti: stessa azienda + stesso nominativo (in qualunque ordine). */
+function refKey_(o) {
+  var k = personKey_(o.NOME, o.COGNOME);
+  return o.ID_CLIENTE && k ? o.ID_CLIENTE + '|' + k : '';
+}
+
+/** Report delle persone: scarti contati per motivo, avvisi per ID, nessun nome (minimizzazione). */
+function countReport_(p) {
+  var report = [], perMotivo = {};
+  p.scarti.forEach(function (s) { perMotivo[s.motivo] = (perMotivo[s.motivo] || 0) + 1; });
+  Object.keys(perMotivo).forEach(function (k) { report.push(['non importati', '', '', perMotivo[k] + ': ' + k]); });
+  p.avvisi.forEach(function (s) { report.push(['avviso', s.id, '', s.motivo]); });
+  return report;
+}
+
+function done_(report, p, stats, lines) {
+  stats.righe = p.righe;
+  stats.scarti = p.scarti.length;
+  stats.avvisi = p.avvisi.length;
+  return { ok: true, report: report, stats: stats,
+    lines: lines.concat(p.colonneAssenti.length ? ['Colonne non trovate nel file: ' + p.colonneAssenti.join(', ')] : [])
+      .concat(['Dettaglio nel foglio Report_import.']) };
 }
 
 function headerError_(p) {
   return { ok: false, lines: ['Colonne obbligatorie mancanti nel file: ' + p.mancanti.join(', '),
-    'Rifare l\'export da HubSpot con le colonne indicate nella SPEC §5bis.'] };
+    'Rifare l\'export con le colonne indicate nella SPEC §5bis/§5ter.'] };
 }
 
-function nomeCliente_(rows, idHs) {
-  for (var i = 0; i < rows.length; i++) if (String(rows[i].ID_HUBSPOT) === idHs) return rows[i].RAGIONE_SOCIALE || '';
+function nomeDa_(rows, field, id) {
+  for (var i = 0; i < rows.length; i++) if (String(rows[i][field]) === id) return rows[i].RAGIONE_SOCIALE || '';
   return '';
 }
 

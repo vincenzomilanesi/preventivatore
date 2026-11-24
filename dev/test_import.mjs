@@ -79,10 +79,10 @@ const alfa = cl.find((o) => o.ID_HUBSPOT === '1001');
 t('doppione: resta il più completo, l\'altro ID in ID_HUBSPOT_ALTRI', alfa && alfa.ID_HUBSPOT_ALTRI === '1002' && !cl.some((o) => o.ID_HUBSPOT === '1002'));
 t('campi puliti (spazi, indirizzo unito, CAP con zero iniziale)', alfa.RAGIONE_SOCIALE === 'Alfa Srl' && alfa.INDIRIZZO === 'Via Roma 1, Scala B' && alfa.CAP === '01100');
 t('ID cliente progressivo CLI-000001', alfa.ID_CLIENTE === 'CLI-000001' && cl[3].ID_CLIENTE === 'CLI-000004');
-t('campi standard', alfa.TIPO === 'azienda' && alfa.ORIGINE === 'hubspot' && alfa.STATO_HUBSPOT === 'sincronizzato' && alfa.CREATO_DA === 'import HubSpot' && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(alfa.CREATO_IL));
+t('campi standard', alfa.TIPO === 'azienda' && alfa.ORIGINE === 'hubspot' && alfa.STATO_HUBSPOT === 'sincronizzato' && alfa.CREATO_DA === 'import hubspot' && /^\d{4}-\d\d-\d\d \d\d:\d\d$/.test(alfa.CREATO_IL));
 const beta = cl.find((o) => o.ID_HUBSPOT === '1003');
 t('P.IVA non valida → vuota + avviso', beta.PIVA === '' && r.stats.avvisi === 1);
-t('Paese: alias normalizzato e ripiego su Nazione', beta.PAESE === 'United States' && cl.find((o) => o.ID_HUBSPOT === '1002' || o.ID_HUBSPOT_ALTRI === '1002').PAESE === 'Italy');
+t('Paese: in italiano e ripiego su Nazione', beta.PAESE === 'Stati Uniti' && cl.find((o) => o.ID_HUBSPOT === '1002' || o.ID_HUBSPOT_ALTRI === '1002').PAESE === 'Italia');
 t('provider di posta con P.IVA valida → tenuta', cl.some((o) => o.ID_HUBSPOT === '1007'));
 t('formula neutralizzata in scrittura (apostrofo), riletta come testo', g.escapes.some((e) => e.sheet === 'Clienti' && e.value === '=HYPERLINK("x")') &&
   objs(L, 'Clienti').some((o) => o.RAGIONE_SOCIALE === '=HYPERLINK("x")'));
@@ -163,6 +163,106 @@ t('colonne obbligatorie mancanti → errore leggibile', !r.ok && /FASE/.test(r.l
 t('importFiles_ trova il CSV', L.importFiles_().length === 1);
 ({ g, L } = mk([file('a.csv', ''), file('b.csv', ''), file('nota.txt', '')]));
 t('importFiles_ ignora i non CSV', L.importFiles_().length === 2);
+
+// ================================================================ eLibra (fonte principale) + HubSpot
+const EPG = ['ID', 'Ragione Sociale', 'Partita IVA', 'Partita IVA UE', 'Codice Fiscale', 'Indirizzo', 'CAP', 'Città', 'Provincia',
+  'Paese', 'Referente Principale', 'Tipologia', 'Segmento di mercato', 'Cliente', 'SOB', 'Origine', 'Contatto Orgine', 'Utente creatore'];
+const epg = [EPG,
+  ['501', 'ALFA SRL', '01234567897', 'IT01234567897', '01234567897', 'Via Po 9', '01100', 'VITERBO', 'VT', 'ITALIA', '', 'Società di capitali', 'Servizi', 'SI', 'Studio Studio', 'Interno', 'XX Nome Staff', ' elibrauser'],
+  ['502', 'Omega Spa', '', 'FRAB123456789', '', '', '', 'Parigi', '', 'Francia', '', '', '', 'NO', '', '', '', ''],
+  ['503', 'Sigma Snc', '12345678900', '', 'NULL', '', '', 'Fano', 'PU', 'Italia', '', '', '', 'SI', '', '', '', ''],   // P.IVA errata
+  ['504', '', '', '', '', '', '', '', '', '', '', '', '', 'NO', '', '', '', ''],                                     // senza nome
+  ['505', 'Omonima Srl', '11111111115', '', '', '', '', 'Roma', '', 'Italia', '', '', '', 'SI', '', '', '', ''],
+  ['506', 'Omonima Srl', '11111111115', '', '', '', '', 'Milano', '', 'Italia', '', '', '', 'NO', '', '', '', ''],   // P.IVA ripetuta, stesso nome
+];
+const EPF = ['ID', 'Cognome e Nome', 'Codice Fiscale', 'Partita IVA', 'Indirizzo', 'CAP', 'Città', 'Provincia', 'Paese', 'Professione',
+  'PG collegata', 'Cliente', 'SOB'];
+const epf = [EPF,
+  ['901', 'Bianchi Anna', 'NULL', '', '', '', '', '', '', 'Avvocato', 'ALFA SRL - Ruolo: Amministratore delegato - Segmento: Servizi', 'NO', ''],
+  ['902', 'Neri Carla', 'RSSMRA80A01H501U', '', 'Via Roma 2', '00100', 'ROMA', 'RM', 'ITALIA', '', ' - Ruolo:  - Segmento: ', 'SI', ''],
+  ['903', 'Gialli Dario', '', '', '', '', '', '', '', '', 'ALFA SRL - Ruolo: Consulente - Segmento: ServiziOmega Spa - Ruolo: Altre funzioni - Segmento: ', 'NO', ''],
+  ['904', 'Senza Legami', '', '', '', '', '', '', '', '', ' - Ruolo:  - Segmento: ', 'NO', ''],            // scartata
+  ['905', 'Rosa Franco', '', '', '', '', '', '', '', '', 'Omonima Srl - Ruolo: Socio - Segmento: ', 'NO', ''],   // azienda ambigua
+  ['906', 'Blu Elena', '', '', '', '', '', '', '', '', 'Sconosciuta Spa - Ruolo: Socio - Segmento: ', 'NO', ''], // azienda non trovata
+];
+{
+  const { g, L } = mk();
+  t('eLibra: tipi riconosciuti', L.detectHubspotExport_(EPG) === 'elibra_pg' && L.detectHubspotExport_(EPF) === 'elibra_pf');
+  t('parsePgCollegata_: più aziende concatenate', JSON.stringify(L.parsePgCollegata_(epf[3][10], { 'alfa srl': 1, 'omega spa': 1 })) === '["ALFA SRL","Omega Spa"]');
+  r = L.importHubspot_(L.parseCsv_(csv(epf, ';')), 'elibra_pf', 'pf.csv');
+  t('eLibra PF prima delle PG → bloccato', !r.ok && /prima eLibra Persone giuridiche/.test(r.lines[0]));
+  // CSV salvato da Excel italiano: separatore punto e virgola
+  r = L.importHubspot_(L.parseCsv_(csv(epg, ';')), 'elibra_pg', 'pg.csv');
+  let cl = objs(L, 'Clienti');
+  t('eLibra PG: 5 aziende (scartata quella senza nome)', r.ok && cl.length === 5 && r.stats.scarti === 1, r.lines.join(' | '));
+  const alfa = cl.find((o) => o.ID_ELIBRA === '501');
+  t('eLibra PG: campi e normalizzazioni', alfa.RAGIONE_SOCIALE === 'ALFA SRL' && alfa.PIVA === '01234567897' && alfa.CF === '' &&
+    alfa.CITTA === 'Viterbo' && alfa.PAESE === 'Italia' && alfa.CLIENTE_ELIBRA === 'Sì' && alfa.ORIGINE === 'elibra' && alfa.STATO_HUBSPOT === '');
+  t('eLibra PG: P.IVA UE estera usata se manca la P.IVA', cl.find((o) => o.ID_ELIBRA === '502').PIVA === 'FRAB123456789' &&
+    cl.find((o) => o.ID_ELIBRA === '502').CLIENTE_ELIBRA === 'No');
+  t('eLibra PG: P.IVA errata → vuota + avviso; CF "NULL" ignorato', cl.find((o) => o.ID_ELIBRA === '503').PIVA === '' && r.stats.avvisi === 1);
+  t('eLibra PG: P.IVA ripetuta → 2 righe distinte + report', cl.filter((o) => o.PIVA === '11111111115').length === 2 &&
+    objs(L, 'Report_import').some((o) => o.ESITO === 'P.IVA ripetuta in eLibra' && o.ID_HUBSPOT === '505, 506'));
+  t('eLibra PG: dati esclusi non presenti', !JSON.stringify(objs(L, 'Clienti')).includes('Staff') && !JSON.stringify(objs(L, 'Clienti')).includes('elibrauser'));
+
+  r = L.importHubspot_(L.parseCsv_(csv(epf, ';')), 'elibra_pf', 'pf.csv');
+  cl = objs(L, 'Clienti');
+  let ref = objs(L, 'Referenti');
+  const carla = cl.find((o) => o.ID_ELIBRA === '902');
+  t('eLibra PF: cliente persona con CF, città e paese normalizzati', r.ok && carla && carla.TIPO === 'persona' && carla.COGNOME === 'Neri Carla' &&
+    carla.CF === 'RSSMRA80A01H501U' && carla.CITTA === 'Roma' && carla.CLIENTE_ELIBRA === 'Sì', r.lines.join(' | '));
+  t('eLibra PF: referenti (anche persona con 2 aziende)', ref.length === 3 &&
+    ref.filter((o) => o.COGNOME === 'Gialli Dario').map((o) => o.ID_CLIENTE).sort().join(',') ===
+    [alfa.ID_CLIENTE, cl.find((o) => o.ID_ELIBRA === '502').ID_CLIENTE].sort().join(','));
+  t('eLibra PF: ID referente = persona/cliente', ref.find((o) => o.COGNOME === 'Bianchi Anna').ID_ELIBRA === '901/' + alfa.ID_CLIENTE);
+  t('eLibra PF: ruolo e professione non importati', !JSON.stringify(ref).includes('Amministratore') && !JSON.stringify(cl).includes('Avvocato'));
+  t('eLibra PF: scarti e avvisi (ambigua, non trovata)', r.stats.scarti === 1 && r.stats.avvisi === 2);
+  t('eLibra PF: report senza nomi', objs(L, 'Report_import').filter((o) => o.IMPORT === 'elibra_pf').every((o) => o.NOME === '' && !/Rosa|Blu|Legami/.test(o.DETTAGLIO)));
+  r = L.importHubspot_(L.parseCsv_(csv(epf, ';')), 'elibra_pf', 'pf.csv');
+  t('eLibra PF: reimport senza modifiche', r.stats.personeNuove === 0 && r.stats.referentiNuovi === 0 && r.stats.personeAggiornate === 0 && r.stats.referentiAggiornati === 0);
+  r = L.importHubspot_(L.parseCsv_(csv(epg, ';')), 'elibra_pg', 'pg.csv');
+  t('eLibra PG: reimport senza modifiche', r.stats.nuovi === 0 && r.stats.aggiornati === 0);
+
+  // HubSpot su eLibra: unione per P.IVA, HubSpot non sovrascrive i dati eLibra
+  r = L.importHubspot_(L.parseCsv_(csv(aziende)), 'aziende', 'aziende.csv');
+  cl = objs(L, 'Clienti');
+  const alfa2 = cl.find((o) => o.ID_ELIBRA === '501');
+  t('HubSpot 1001 unita al cliente eLibra per P.IVA', r.stats.agganciati === 1 && alfa2.ID_HUBSPOT === '1001' && alfa2.ID_HUBSPOT_ALTRI === '1002' &&
+    alfa2.STATO_HUBSPOT === 'sincronizzato', r.lines.join(' | '));
+  t('HubSpot non sovrascrive i dati eLibra, aggiunge dominio e telefono', alfa2.RAGIONE_SOCIALE === 'ALFA SRL' && alfa2.CITTA === 'Viterbo' &&
+    alfa2.INDIRIZZO === 'Via Po 9' && alfa2.DOMINIO === 'alfa.test.invalid' && alfa2.TELEFONO === '+39 0761 000000');
+  t('altre aziende HubSpot come prospect', cl.filter((o) => o.ORIGINE === 'hubspot').length === 3);
+  r = L.importHubspot_(L.parseCsv_(csv(aziende)), 'aziende', 'aziende.csv');
+  t('HubSpot su eLibra: reimport senza modifiche', r.stats.nuovi === 0 && r.stats.aggiornati === 0);
+  r = L.importHubspot_(L.parseCsv_(csv(epg, ';')), 'elibra_pg', 'pg.csv');
+  t('eLibra dopo HubSpot: nessuna modifica (campi separati)', r.stats.nuovi === 0 && r.stats.aggiornati === 0);
+
+  // contatti HubSpot: referente eLibra con lo stesso nome → unito (aggiunge e-mail)
+  const c3 = [HC, ['2001', 'Anna', 'Bianchi', 'anna@alfa.test.invalid', '0761 1', '', '1001', '1001', 'Lead', '', ''],
+    ['2003', 'Carla', 'Neri', 'carla@privato.test.invalid', '', 'RSSMRA80A01H501U', '', '', 'Cliente', '', '']];
+  r = L.importHubspot_(L.parseCsv_(csv(c3)), 'contatti', 'c3.csv');
+  ref = objs(L, 'Referenti');
+  const anna = ref.filter((o) => o.ID_CLIENTE === alfa2.ID_CLIENTE && /bianchi/i.test(o.COGNOME));
+  t('contatto HubSpot unito al referente eLibra (stesso nome, stessa azienda)', anna.length === 1 && anna[0].ID_HUBSPOT === '2001' &&
+    anna[0].EMAIL === 'anna@alfa.test.invalid' && anna[0].COGNOME === 'Bianchi Anna', r.lines.join(' | '));
+  const carla2 = objs(L, 'Clienti').filter((o) => o.TIPO === 'persona');
+  t('persona HubSpot unita al cliente eLibra per CF (aggiunge e-mail)', carla2.length === 1 && carla2[0].ID_HUBSPOT === '2003' &&
+    carla2[0].EMAIL === 'carla@privato.test.invalid' && carla2[0].COGNOME === 'Neri Carla');
+  r = L.importHubspot_(L.parseCsv_(csv(epf, ';')), 'elibra_pf', 'pf.csv');
+  t('eLibra PF dopo HubSpot: nessuna modifica', r.stats.personeAggiornate === 0 && r.stats.referentiAggiornati === 0 && r.stats.referentiNuovi === 0);
+}
+{
+  // ordine inverso: HubSpot prima, poi eLibra si aggancia per P.IVA (nessun doppione)
+  const { L } = mk();
+  L.importHubspot_(L.parseCsv_(csv(aziende)), 'aziende', 'aziende.csv');
+  const r2 = L.importHubspot_(L.parseCsv_(csv(epg, ';')), 'elibra_pg', 'pg.csv');
+  const cl = objs(L, 'Clienti');
+  const a = cl.filter((o) => o.PIVA === '01234567897');
+  t('ordine inverso: eLibra si aggancia alla riga HubSpot e la anagrafica diventa eLibra', a.length === 1 && a[0].ID_ELIBRA === '501' &&
+    a[0].ID_HUBSPOT === '1001' && a[0].RAGIONE_SOCIALE === 'ALFA SRL' && r2.stats.agganciati === 1);
+  const r3 = L.importHubspot_(L.parseCsv_(csv(aziende)), 'aziende', 'aziende.csv');
+  t('ordine inverso: HubSpot poi non cambia i dati eLibra', r3.stats.aggiornati === 0 && objs(L, 'Clienti').find((o) => o.ID_ELIBRA === '501').RAGIONE_SOCIALE === 'ALFA SRL');
+}
 
 console.log(fails ? `\n${fails} TEST FALLITI` : '\nTUTTI I TEST IMPORT PASSATI');
 process.exit(fails ? 1 : 0);

@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var WEB_VERSION = '0.3.0';
+  var WEB_VERSION = '0.4.0';
   var TOKEN_KEY = 'prv_token';        // sessionStorage: la sessione muore con la scheda
   var DRAFT_KEY = 'prv_draft_v1';     // localStorage: bozza del preventivo in corso
 
@@ -188,7 +188,8 @@
           : d.totale + (d.totale === 1 ? ' cliente trovato.' : ' clienti trovati.');
         list.replaceChildren.apply(list, d.risultati.map(function (c) {
           var meta = [c.citta, c.doc ? (c.tipo === 'persona' && c.doc.length === 16 ? 'CF ' : 'P.IVA ') + c.doc : '',
-            c.tipo === 'persona' ? 'persona fisica' : '', c.via ? 'referente: ' + c.via : ''].filter(Boolean).join(' · ');
+            c.tipo === 'persona' ? 'persona fisica' : '', c.cliente ? 'cliente con pratiche' : '',
+            c.via ? 'referente: ' + c.via : ''].filter(Boolean).join(' · ');
           return el('li', {}, [el('button', { type: 'button', class: 'result', on: { click: function () { scegli(c.id); } } }, [
             el('span', { class: 'r-nome', text: c.nome || '(senza nome)' }), el('span', { class: 'r-meta', text: meta })
           ])]);
@@ -235,6 +236,8 @@
     function fill(c) {
       var rows = [
         ['Tipo', c.tipo === 'persona' ? 'Persona fisica' : 'Azienda'],
+        ['Stato', c.cliente_elibra === 'Sì' ? 'Cliente con pratiche (eLibra)' : c.cliente_elibra === 'No'
+          ? 'In anagrafica eLibra, senza pratiche' : 'Contatto HubSpot (non in eLibra)'],
         ['P.IVA', c.piva], ['Codice fiscale', c.cf],
         ['Indirizzo', [c.indirizzo, [c.cap, c.citta].filter(Boolean).join(' '), c.provincia, c.paese].filter(Boolean).join(', ')],
         ['E-mail', c.email], ['Telefono', c.telefono]

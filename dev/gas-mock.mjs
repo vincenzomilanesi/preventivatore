@@ -129,6 +129,18 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
   };
 }
 
+let SCHEMA = null;
+/** Schema dei fogli letto da apps-script/Config.gs (una sola fonte di verità). */
+function schema() {
+  if (!SCHEMA) {
+    const ctx = {};
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'apps-script', 'Config.gs'), 'utf8'), ctx);
+    SCHEMA = ctx.REGISTRO_SCHEMA;
+  }
+  return SCHEMA;
+}
+
 export function seedSheets() {
   return {
     Utenti: [
@@ -139,11 +151,8 @@ export function seedSheets() {
     Parametri: [['CHIAVE', 'VALORE', 'DESCRIZIONE'], ['versione_catalogo', '20261118-164303', ''],
       ['nota_mail_otp', 'Codice di accesso al Preventivatore Bacciardi Partners', '']],
     Log: [['TS', 'LIVELLO', 'AZIONE', 'UTENTE', 'DETTAGLIO']],
-    Clienti: [['ID_CLIENTE', 'ID_HUBSPOT', 'ID_HUBSPOT_ALTRI', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF',
-      'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA', 'PROVINCIA', 'PAESE', 'DOMINIO', 'ORIGINE', 'STATO_HUBSPOT',
-      'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA']],
-    Referenti: [['ID_REFERENTE', 'ID_HUBSPOT', 'ID_CLIENTE', 'NOME', 'COGNOME', 'EMAIL', 'TELEFONO', 'ORIGINE',
-      'STATO_HUBSPOT', 'CREATO_DA', 'CREATO_IL', 'AGGIORNATO_IL', 'ESPORTATO_IL', 'RICERCA']],
+    Clienti: [schema().Clienti.slice()],
+    Referenti: [schema().Referenti.slice()],
     Report_import: [['TS', 'IMPORT', 'ESITO', 'ID_HUBSPOT', 'NOME', 'DETTAGLIO']],
     Contatori: [['CHIAVE', 'VALORE'], ['PRV-2026', 0]],
   };
@@ -155,7 +164,7 @@ export function seedClienti(g) {
   const now = '2026-11-24 10:00';
   const base = { ORIGINE: 'hubspot', STATO_HUBSPOT: 'sincronizzato', CREATO_DA: 'seed', CREATO_IL: now, AGGIORNATO_IL: now };
   const clienti = [
-    { ID_CLIENTE: 'CLI-000001', ID_HUBSPOT: '1001', TIPO: 'azienda', RAGIONE_SOCIALE: 'Alfa Meccanica Srl', PIVA: '01234567897',
+    { ID_CLIENTE: 'CLI-000001', ID_ELIBRA: '501', CLIENTE_ELIBRA: 'Sì', ID_HUBSPOT: '1001', TIPO: 'azienda', RAGIONE_SOCIALE: 'Alfa Meccanica Srl', PIVA: '01234567897',
       INDIRIZZO: 'Via Roma 1', CAP: '61121', CITTA: 'Pesaro', PROVINCIA: 'Pesaro-Urbino', PAESE: 'Italy', DOMINIO: 'alfa.test.invalid', TELEFONO: '+39 0721 000000' },
     { ID_CLIENTE: 'CLI-000002', ID_HUBSPOT: '1002', TIPO: 'azienda', RAGIONE_SOCIALE: 'Alfa', CITTA: 'Fano', PAESE: 'Italy', DOMINIO: 'alfa2.test.invalid' },
     { ID_CLIENTE: 'CLI-000003', ID_HUBSPOT: '1003', TIPO: 'azienda', RAGIONE_SOCIALE: 'Beta Società Agricola', PIVA: '12345678903', CITTA: 'Urbino', PAESE: 'Italy', DOMINIO: 'beta.test.invalid' },

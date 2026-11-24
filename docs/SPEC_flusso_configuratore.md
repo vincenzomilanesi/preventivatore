@@ -127,6 +127,31 @@ anche tramite i referenti, mostrati come "referente: …") e `clienti.get` {id} 
 "Alla cortese attenzione di"). Indice compatto in CacheService a blocchi da 40k caratteri, 6 h, invalidato a ogni
 import. La ricerca non va nel Log. Nella bozza del browser restano solo ID_CLIENTE e ID_REFERENTE.
 
+### 5ter. eLibra come fonte principale (24/11/2026, v0.4.0)
+
+Export eLibra (anagrafiche, xlsx → salvati come **CSV UTF-8**): Persone giuridiche 3.400 righe × 26 colonne,
+Persone fisiche 5.809 × 20. `Cliente` = SI ⇔ almeno una pratica (PG 2.037, PF 193): flag affidabile.
+Dati fiscali migliori di HubSpot (P.IVA IT valide 1.595); PF senza e-mail né telefono; "PG collegata" = testo
+"Ragione sociale - Ruolo: … - Segmento: …" (concatenato senza separatore se più aziende). Sovrapposizione con
+HubSpot bassa (296 P.IVA in comune).
+
+| # | Decisione |
+|---|---|
+| E1 | **eLibra fonte principale + HubSpot**: su righe con ID_ELIBRA, HubSpot scrive solo dominio, telefono, e-mail |
+| E2 | eLibra PG: **tutte**, con colonna CLIENTE_ELIBRA (Sì/No); scartate solo senza ragione sociale / ID ripetuto |
+| E3 | eLibra PF: Cliente = SI → clienti persona; collegate ad aziende → **referenti con solo nominativo** (ruolo e professione esclusi); le altre non importate |
+
+Regole di unione: azienda HubSpot ↔ eLibra per **P.IVA**; persona per **CF**; referente HubSpot ↔ eLibra per stessa
+azienda + stesso nominativo (ordine nome/cognome indifferente). P.IVA ripetute **dentro** eLibra non si uniscono
+(anagrafiche distinte, segnalate nel report). eLibra ha cognome e nome in un unico campo → COGNOME.
+ID_ELIBRA del referente = `<ID persona>/<ID_CLIENTE>`. Paesi normalizzati in italiano per entrambe le fonti.
+Ordine di import: eLibra PG → eLibra PF → HubSpot Aziende → HubSpot Contatti (anche in ordine diverso non crea
+doppioni). Ricerca: a parità, prima i clienti con pratiche; il portale mostra "cliente con pratiche".
+
+Prova sui file reali (solo locale): 3.387 aziende eLibra (13 scarti, 134 avvisi P.IVA/CF, 57 P.IVA ripetute),
+193 clienti persona, 5.068 referenti; HubSpot: 7.040 nuove + 297 unite a eLibra per P.IVA → **10.620 clienti**
+(2.229 con pratiche), indice di ricerca ~1,3 MB (34 blocchi), reimport = 0 modifiche per tutte le fonti.
+
 **Utenti (24/11):** Martina Cangiotti DIP = OPE, profilo admin confermato. Dominio `bacciardistudiolegale.it` non ammesso.
 
 ## 6. Prossimi passi (19/11)
