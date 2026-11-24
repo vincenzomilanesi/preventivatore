@@ -18,17 +18,34 @@ function actClientiSearch_(p) {
 function actClientiGet_(p) {
   var id = String(p.id || '');
   if (!/^CLI-\d{6}$/.test(id)) fail_('NOT_FOUND');
-  var c = null;
-  var rows = readTable_('Clienti');
-  for (var i = 0; i < rows.length && !c; i++) if (rows[i].ID_CLIENTE === id) c = rows[i];
+  var c = rowsWhere_('Clienti', 'ID_CLIENTE', id)[0];
   if (!c) fail_('NOT_FOUND');
-  var refs = readTable_('Referenti').filter(function (r) { return r.ID_CLIENTE === id; }).map(function (r) {
+  var refs = rowsWhere_('Referenti', 'ID_CLIENTE', id).map(function (r) {
     return { id: r.ID_REFERENTE, nome: r.NOME, cognome: r.COGNOME, email: r.EMAIL, telefono: r.TELEFONO };
   }).sort(function (a, b) { return (a.cognome + a.nome).localeCompare(b.cognome + b.nome, 'it'); });
   var out = { id: c.ID_CLIENTE, denominazione: clienteLabel_(c), referenti: refs };
   ['CLIENTE_ELIBRA', 'TIPO', 'RAGIONE_SOCIALE', 'NOME', 'COGNOME', 'PIVA', 'CF', 'EMAIL', 'TELEFONO', 'INDIRIZZO', 'CAP', 'CITTA',
     'PROVINCIA', 'PAESE', 'ORIGINE', 'STATO_HUBSPOT'].forEach(function (k) { out[k.toLowerCase()] = c[k]; });
   return out;
+}
+
+/**
+ * Righe in cui la colonna vale esattamente `value`, lette una per una (TextFinder sulla sola colonna): evita di
+ * leggere tutto il foglio (10.000+ righe) per aprire un cliente. Presuppone colonne nell'ordine dello schema.
+ */
+function rowsWhere_(name, colName, value) {
+  var sh = sheet_(name);
+  var hdr = REGISTRO_SCHEMA[name];
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var found = sh.getRange(2, hdr.indexOf(colName) + 1, last - 1, 1).createTextFinder(String(value))
+    .matchEntireCell(true).matchCase(true).findAll();
+  return found.map(function (cell) {
+    var v = sh.getRange(cell.getRow(), 1, 1, hdr.length).getValues()[0];
+    var o = {};
+    hdr.forEach(function (h, i) { o[h] = v[i] === undefined || v[i] === null ? '' : String(v[i]); });
+    return o;
+  });
 }
 
 /** Indice di ricerca dalla cache; se manca o è incompleto lo ricostruisce dai fogli. */

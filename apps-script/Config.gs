@@ -12,7 +12,7 @@
  *   OTP_TTL_MIN           validità codice OTP in minuti (default 10)
  *   SESSION_TTL_MIN       durata sessione in minuti, rinnovata a ogni chiamata (default 240, max 360)
  */
-var APP_VERSION = '0.4.0';
+var APP_VERSION = '0.4.1';
 
 /**
  * Valori ammessi nelle tendine del foglio Utenti (create da "Inizializza / verifica struttura").

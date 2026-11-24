@@ -28,6 +28,20 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
           setDataValidation: (rule) => { validations.push({ sheet: name, row, col, rows, cols, rule }); },
           getSheet: () => sheetObj(name),
           setNumberFormat: (f) => { formats.push({ sheet: name, row, rows, f }); return rng; },
+          createTextFinder: (val) => {
+            const tf = {
+              matchEntireCell: () => tf, matchCase: () => tf,
+              findAll: () => {
+                const out = [];
+                for (let i = 0; i < rows; i++) for (let j = 0; j < cols; j++) {
+                  if (String((data[row - 1 + i] || [])[col - 1 + j] ?? '') === String(val)) out.push({ getRow: () => row + i, getColumn: () => col + j });
+                }
+                textFinds.push({ sheet: name, val });
+                return out;
+              },
+            };
+            return tf;
+          },
           setFontWeight: () => rng,
           getValues: () => Array.from({ length: rows }, (_, i) => Array.from({ length: cols }, (_, j) => (data[row - 1 + i] || [])[col - 1 + j] ?? '')),
           clearContent: () => { for (let i = 0; i < rows; i++) { const r = data[row - 1 + i]; if (r) for (let j = 0; j < cols; j++) r[col - 1 + j] = ''; } return rng; },
@@ -49,6 +63,7 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
   };
   const formats = [];
   const escapes = [];
+  const textFinds = [];
   const dvBuilder = () => {
     const r = {};
     const b = {
@@ -119,6 +134,7 @@ export function createGas({ root, props = {}, sheets = {}, catalogo = null, file
     validations,
     formats,
     escapes,
+    textFinds,
     sheetObj,
     cache: store,
     doPost: (obj) => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(obj) } }).getContent()),

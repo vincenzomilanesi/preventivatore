@@ -51,6 +51,8 @@ t('ricerca non registrata nel Log', !g.ctx.readTable_('Log').some((o) => /alfa|b
 r = call('clienti.get', { id: 'CLI-000001' }, tok);
 t('dettaglio cliente con referenti ordinati per cognome', r.ok && r.data.denominazione === 'Alfa Meccanica Srl' && r.data.piva === '01234567897' &&
   r.data.referenti.map((x) => x.cognome).join(',') === 'Bianchi,Verdi');
+t('dettaglio letto con ricerca mirata (TextFinder), non rileggendo i fogli', g.textFinds.some((x) => x.sheet === 'Clienti' && x.val === 'CLI-000001') &&
+  g.textFinds.some((x) => x.sheet === 'Referenti' && x.val === 'CLI-000001'));
 t('dettaglio senza colonne tecniche', r.ok && !('ricerca' in r.data) && !('id_hubspot' in r.data));
 t('dettaglio: ID inesistente → NOT_FOUND', call('clienti.get', { id: 'CLI-999999' }, tok).error === 'NOT_FOUND');
 t('dettaglio: ID malformato → NOT_FOUND', call('clienti.get', { id: '../x' }, tok).error === 'NOT_FOUND');
